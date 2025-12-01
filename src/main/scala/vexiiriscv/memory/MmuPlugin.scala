@@ -414,6 +414,8 @@ class MmuPlugin(var spec : MmuSpec,
         cmd.valid             := False
         cmd.address           := address.resized
         cmd.size              := U(log2Up(spec.entryBytes))
+        cmd.write             := False
+        cmd.data.assignDontCare()
 
         val flags = readed.resized.as(MmuEntryFlags())
         val leaf = flags.R || flags.X
