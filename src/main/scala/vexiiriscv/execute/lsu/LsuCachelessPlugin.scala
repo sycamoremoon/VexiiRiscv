@@ -331,7 +331,8 @@ class LsuCachelessPlugin(var layer : LaneLayer,
         WITH_ACCESS := accessSent || cmd.fire
         when(allowIt) {
           bus.cmd.valid := cmd.valid
-          bus.cmd.write := False
+          bus.cmd.write := cmd.write
+          bus.cmd.data  := cmd.data
           bus.cmd.address := cmd.address
           bus.cmd.size := cmd.size
           bus.cmd.fromHart := False
