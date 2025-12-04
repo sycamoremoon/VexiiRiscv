@@ -14,6 +14,7 @@ import vexiiriscv.memory.AddressTranslationPortUsage.{FETCH, LOAD_STORE}
 import vexiiriscv.misc.{PerformanceCounterService, PipelineBuilderPlugin, PrivilegedPlugin, TrapReason}
 import vexiiriscv.riscv.CSR
 import vexiiriscv.riscv.Riscv._
+import vexiiriscv.misc.TrapArg
 
 import scala.collection.mutable.ArrayBuffer
 
@@ -102,7 +103,8 @@ class MmuPlugin(var spec : MmuSpec,
                       usage : AddressTranslationPortUsage,
                       pp: MmuPortParameter,
                       ss : StorageSpec,
-                      rsp : AddressTranslationRsp){
+                      rsp : AddressTranslationRsp,
+                      isStore: Bool){
     val readStage = stages(pp.readAt)
     val hitsStage = stages(pp.hitsAt)
     val ctrlStage = stages(pp.ctrlAt)
@@ -129,7 +131,8 @@ class MmuPlugin(var spec : MmuSpec,
                                   forcePhysical : Payload[Bool],
                                   usage : AddressTranslationPortUsage,
                                   portSpec: Any,
-                                  storageSpec: Any) = {
+                                  storageSpec: Any,
+                                  isStore: Bool) = {
     val pp = portSpec.asInstanceOf[MmuPortParameter]
     val ss = storageSpec.asInstanceOf[StorageSpec]
     portSpecs.addRet(
@@ -140,7 +143,8 @@ class MmuPlugin(var spec : MmuSpec,
         usage       = usage,
         pp          = pp,
         ss          = ss,
-        rsp         = new AddressTranslationRsp(this /*, stages(pp.rspAt)*/, ss.p.levels.map(_.ways).sum)
+        rsp         = new AddressTranslationRsp(this /*, stages(pp.rspAt)*/, ss.p.levels.map(_.ways).sum),
+        isStore     = isStore
       )
     ).rsp
   }
@@ -192,6 +196,7 @@ class MmuPlugin(var spec : MmuSpec,
       val virtualAddress  = UInt(vw-log2Up(depth) bits)
       val physicalAddress = UInt(pw bits)
       val allowRead, allowWrite, allowExecute, allowUser = Bool()
+      val accessed, dirty = Bool()
 
       def hit(address : UInt) = /*valid && */virtualAddress === address(spec.levels(levelId).virtualOffset + log2Up(depth), vw - log2Up(depth) bits)
       def physicalAddressFrom(address : UInt) = physicalAddress @@ address(0, spec.levels(levelId).physicalOffset bits)
@@ -310,6 +315,8 @@ class MmuPlugin(var spec : MmuSpec,
         val lineAllowWrite   = entriesMux(_.allowWrite)
         val lineAllowUser    = entriesMux(_.allowUser)
         val lineTranslated   = entriesMux(_.physicalAddressFrom(ps.preAddress))
+        val lineDirty        = entriesMux(_.dirty)
+        val lineAccessed     = entriesMux(_.accessed)
 
         val requireMmuLockup  = CombInit(ps.usage match {
           case LOAD_STORE => api.lsuTranslationEnable
@@ -320,7 +327,7 @@ class MmuPlugin(var spec : MmuSpec,
         import ps.rsp.keys._
         when(requireMmuLockup) {
           HAZARD        := False
-          REFILL        := !hit
+          REFILL        := !hit || (!lineDirty && ps.isStore)
           TRANSLATED    := lineTranslated
           ALLOW_EXECUTE := lineAllowExecute && !(lineAllowUser && isSupervisor)
           ALLOW_READ    := lineAllowRead || status.mxr && lineAllowExecute
@@ -497,9 +504,11 @@ class MmuPlugin(var spec : MmuSpec,
             storageLevel.write.data.virtualAddress  := virtual(specLevel.virtualOffset + log2Up(storageLevel.slp.sets), widthOf(storageLevel.write.data.virtualAddress) bits)
             storageLevel.write.data.physicalAddress := (load.levelToPhysicalAddress(levelId) >> specLevel.virtualOffset).resized
             storageLevel.write.data.allowRead       := load.flags.R
-            storageLevel.write.data.allowWrite      := load.flags.W && load.flags.D
+            storageLevel.write.data.allowWrite      := load.flags.W
             storageLevel.write.data.allowExecute    := load.flags.X
             storageLevel.write.data.allowUser       := load.flags.U
+            storageLevel.write.data.dirty           := load.flags.D
+            storageLevel.write.data.accessed        := True //load.flags.A
 
             when(pageFault || accessFault || !storageEnable) {
               storageLevel.write.mask := 0

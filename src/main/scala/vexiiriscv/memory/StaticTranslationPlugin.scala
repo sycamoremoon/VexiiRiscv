@@ -33,7 +33,8 @@ class StaticTranslationPlugin(var physicalWidth: Int) extends FiberPlugin with A
                                   forcePhysical: Payload[Bool],
                                   usage: AddressTranslationPortUsage,
                                   portSpec: Any,
-                                  storageSpec: Any): AddressTranslationRsp = {
+                                  storageSpec: Any,
+                                  isStore: Bool): AddressTranslationRsp = {
     portSpecs.addRet(
       new PortSpec(
         stages = stages,

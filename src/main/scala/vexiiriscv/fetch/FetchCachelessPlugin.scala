@@ -97,7 +97,8 @@ class FetchCachelessPlugin(var wordWidth : Int,
         forcePhysical = insert(False),
         usage = AddressTranslationPortUsage.FETCH,
         portSpec = translationPortParameter,
-        storageSpec = translationStorage
+        storageSpec = translationStorage,
+        isStore = False
       )
     }
     val tpk = onAddress.translationPort.keys

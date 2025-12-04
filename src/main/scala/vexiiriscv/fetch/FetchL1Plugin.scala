@@ -341,7 +341,8 @@ class FetchL1Plugin(var translationStorageParameter: Any,
       forcePhysical = pp.fetch(readAt).insert(False),
       usage = AddressTranslationPortUsage.FETCH,
       portSpec = translationPortParameter,
-      storageSpec = translationStorage
+      storageSpec = translationStorage,
+      isStore = False
     )
     val tpk = translationPort.keys
 
