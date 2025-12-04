@@ -408,7 +408,8 @@ class LsuPlugin(var layer : LaneLayer,
         forcePhysical = FORCE_PHYSICAL,
         usage = AddressTranslationPortUsage.LOAD_STORE,
         portSpec = translationPortParameter,
-        storageSpec = translationStorage
+        storageSpec = translationStorage,
+        isStore = STORE
       )
 
       val ports = ArrayBuffer[Stream[LsuL1Cmd]]()

@@ -21,6 +21,7 @@ case class AddressTranslationRefillCmd(storageWidth : Int) extends Bundle{
   val address = MIXED_ADDRESS()
   val storageId = UInt(storageWidth bits)
   val storageEnable = Bool()
+  val mmuArg = Bits(2 bits)
 }
 
 case class AddressTranslationRefillRsp() extends Bundle{
@@ -92,7 +93,8 @@ trait AddressTranslationService extends Area {
                          forcePhysical: Payload[Bool],
                          usage: AddressTranslationPortUsage,
                          portSpec: Any,
-                         storageSpec: Any): AddressTranslationRsp
+                         storageSpec: Any,
+                         isStore: Payload[Bool]): AddressTranslationRsp
 
   val refillPorts = ArrayBuffer[AddressTranslationRefill]()
   def newRefillPort() = refillPorts.addRet(AddressTranslationRefill(getStorageIdWidth()))
