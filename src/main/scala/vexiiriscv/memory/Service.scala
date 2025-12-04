@@ -94,7 +94,7 @@ trait AddressTranslationService extends Area {
                          usage: AddressTranslationPortUsage,
                          portSpec: Any,
                          storageSpec: Any,
-                         isStore: Bool): AddressTranslationRsp
+                         isStore: Payload[Bool]): AddressTranslationRsp
 
   val refillPorts = ArrayBuffer[AddressTranslationRefill]()
   def newRefillPort() = refillPorts.addRet(AddressTranslationRefill(getStorageIdWidth()))

@@ -17,6 +17,8 @@ import vexiiriscv.riscv.Riscv._
 import vexiiriscv.misc.TrapArg
 
 import scala.collection.mutable.ArrayBuffer
+import vexiiriscv.execute.lsu.AguPlugin.STORE
+import vexiiriscv.execute.lsu.AguPlugin
 
 case class MmuStorageLevel(id : Int,
                            ways : Int,
@@ -104,7 +106,7 @@ class MmuPlugin(var spec : MmuSpec,
                       pp: MmuPortParameter,
                       ss : StorageSpec,
                       rsp : AddressTranslationRsp,
-                      isStore: Bool){
+                      isStore: Payload[Bool]){
     val readStage = stages(pp.readAt)
     val hitsStage = stages(pp.hitsAt)
     val ctrlStage = stages(pp.ctrlAt)
@@ -132,7 +134,7 @@ class MmuPlugin(var spec : MmuSpec,
                                   usage : AddressTranslationPortUsage,
                                   portSpec: Any,
                                   storageSpec: Any,
-                                  isStore: Bool) = {
+                                  isStore: Payload[Bool]) = {
     val pp = portSpec.asInstanceOf[MmuPortParameter]
     val ss = storageSpec.asInstanceOf[StorageSpec]
     portSpecs.addRet(
@@ -317,6 +319,7 @@ class MmuPlugin(var spec : MmuSpec,
         val lineTranslated   = entriesMux(_.physicalAddressFrom(ps.preAddress))
         val lineDirty        = entriesMux(_.dirty)
         val lineAccessed     = entriesMux(_.accessed)
+        val reill_svadu      = (!lineDirty && ps.isStore)
 
         val requireMmuLockup  = CombInit(ps.usage match {
           case LOAD_STORE => api.lsuTranslationEnable
@@ -327,7 +330,7 @@ class MmuPlugin(var spec : MmuSpec,
         import ps.rsp.keys._
         when(requireMmuLockup) {
           HAZARD        := False
-          REFILL        := !hit || (!lineDirty && ps.isStore)
+          REFILL        := !hit || reill_svadu
           TRANSLATED    := lineTranslated
           ALLOW_EXECUTE := lineAllowExecute && !(lineAllowUser && isSupervisor)
           ALLOW_READ    := lineAllowRead || status.mxr && lineAllowExecute
