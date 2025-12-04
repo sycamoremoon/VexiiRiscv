@@ -390,6 +390,7 @@ class TrapPlugin(val trapAt : Int) extends FiberPlugin with TrapService {
             refill.cmd.storageEnable := True
             refill.cmd.address := pending.state.tval.asUInt
             refill.cmd.storageId := pending.state.arg(2, ats.getStorageIdWidth() bits).asUInt
+            refill.cmd.mmuArg := pending.state.arg(1 downto 0)
 
             val invalidate = ats.newInvalidationPort()
             invalidate.cmd.valid := False
