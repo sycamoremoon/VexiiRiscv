@@ -168,7 +168,8 @@ class LsuCachelessPlugin(var layer : LaneLayer,
         forcePhysical = insert(False),
         usage = AddressTranslationPortUsage.LOAD_STORE,
         portSpec = translationPortParameter,
-        storageSpec = translationStorage
+        storageSpec = translationStorage,
+        isStore = STORE
       )
       val MISS_ALIGNED = insert((1 to log2Up(LSLEN / 8)).map(i => SIZE === i && RAW_ADDRESS(i - 1 downto 0) =/= 0).orR) //TODO remove from speculLoad and handle it with trap
     }

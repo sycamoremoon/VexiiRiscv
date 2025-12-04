@@ -91,13 +91,16 @@ class FetchCachelessPlugin(var wordWidth : Int,
     }
 
     val onAddress = new pp.Fetch(addressAt) {
+      val isStoreFalse = Payload(Bool())
+      isStoreFalse := False
       val translationPort = ats.newTranslationPort(
         nodes = Seq(down),
         rawAddress = Fetch.WORD_PC,
         forcePhysical = insert(False),
         usage = AddressTranslationPortUsage.FETCH,
         portSpec = translationPortParameter,
-        storageSpec = translationStorage
+        storageSpec = translationStorage,
+        isStore = isStoreFalse
       )
     }
     val tpk = onAddress.translationPort.keys

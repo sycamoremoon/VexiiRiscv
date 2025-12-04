@@ -140,6 +140,7 @@ class FetchL1Plugin(var translationStorageParameter: Any,
     val HAZARD = Payload(Bool())
     val PREFETCH = Payload(Bool())
     val MIXED_PC = Payload(Global.PC)
+    val isStoreFalse = Payload(Bool())
     def MIXED_PC_SOLVED = prefetcher.nonEmpty.mux(MIXED_PC, WORD_PC)
 
     val BANKS_MUXES = Payload(Vec.fill(bankCount)(Bits(cpuWordWidth bits)))
@@ -335,13 +336,17 @@ class FetchL1Plugin(var translationStorageParameter: Any,
       }
     }
 
+
+
+
     val translationPort = ats.newTranslationPort(
       nodes = Seq(pp.fetch(readAt).down, pp.fetch(readAt+1).down),
       rawAddress = MIXED_PC_SOLVED,
       forcePhysical = pp.fetch(readAt).insert(False),
       usage = AddressTranslationPortUsage.FETCH,
       portSpec = translationPortParameter,
-      storageSpec = translationStorage
+      storageSpec = translationStorage,
+      isStore = isStoreFalse
     )
     val tpk = translationPort.keys
 
@@ -373,6 +378,7 @@ class FetchL1Plugin(var translationStorageParameter: Any,
         case Some(prefetcher) => {
           prefetcher.cmd.ready := down.isReady
           PREFETCH := prefetcher.cmd.valid
+          isStoreFalse := False
           MIXED_PC_SOLVED := PREFETCH ? prefetcher.cmd.pc | WORD_PC
           pp.fetch(readAt).haltWhen(PREFETCH)
 
