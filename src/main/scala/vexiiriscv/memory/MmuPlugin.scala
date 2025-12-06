@@ -348,7 +348,7 @@ class MmuPlugin(var spec : MmuSpec,
     // Implement the TLB storage refill FSM
     val refill = new StateMachine{
       val IDLE = new State
-      val CMD, RSP = List.fill(spec.levels.size)(new State)
+      val CMD, RSP, DONE, UPDATE = List.fill(spec.levels.size)(new State)
 
       val busy = !isActive(IDLE)
       val virtual = Reg(UInt(MIXED_WIDTH bits))
@@ -422,7 +422,7 @@ class MmuPlugin(var spec : MmuSpec,
             } else {
               levelToPhysicalAddress(id)(e.physicalRange) := readed(e.entryRange).asUInt
             }
-          }
+        }
         }
       }
 
@@ -465,23 +465,33 @@ class MmuPlugin(var spec : MmuSpec,
     }
 
       val fetch = for((level, levelId) <- spec.levels.zipWithIndex) yield new Area{
-        val pteFault = (load.exception || load.levelException(levelId) || !load.flags.A)
-        val pteReadError = load.rsp.error
-        val leafAccessFault = load.levelToPhysicalAddress(levelId).drop(physicalWidth) =/= 0 //levelToPhysicalAddress is used to emit fault when the final translated address it outside the range of the physical addresses
+        val pteFaultUnbuffered = (load.exception || load.levelException(levelId) || !load.flags.A)
+        val pteReadErrorUnbuffered = load.rsp.error
+        val leafAccessFaultUnbuffered = load.levelToPhysicalAddress(levelId).drop(physicalWidth) =/= 0 //levelToPhysicalAddress is used to emit fault when the final translated address it outside the range of the physical addresses
+        val flagsUnbuffered = load.flags
+        val leafUnbuffered = load.leaf
+        val physicalAddressUnbuffered = load.levelToPhysicalAddress(levelId)
+
+        val pteFault = Reg(Bool)
+        val pteReadError = Reg(Bool)
+        val leafAccessFault = Reg(Bool)
+        val flags = Reg(MmuEntryFlags())
+        val leaf = Reg(Bool)
+        val physicalAddress = Reg(UInt())
+
+        val pageFaultUnbuffered = !pteReadErrorUnbuffered && pteFaultUnbuffered
+        val accessFaultUnbuffered = pteReadErrorUnbuffered || !pteFaultUnbuffered && leafAccessFaultUnbuffered
+
         val pageFault = !pteReadError && pteFault
         val accessFault = pteReadError || !pteFault && leafAccessFault
 
         def doneLogic() : Unit = {
-          refillPorts.onMask(portOhReg){port =>
-            port.rsp.valid := True
-          }
-
           refillPorts.map(_.rsp).foreach { o =>
             o.pageFault := pageFault
             o.accessFault := accessFault
             o.pf  := pageFault
-            o.ae_ptw    := accessFault && !load.leaf
-            o.ae_final  := accessFault && load.leaf //Note so sure
+            o.ae_ptw    := accessFault && !leaf
+            o.ae_final  := accessFault && leaf //Note so sure
             o.level := spec.levels.size - 1 - levelId
           }
 
@@ -495,11 +505,11 @@ class MmuPlugin(var spec : MmuSpec,
             storageLevel.write.address              := virtual(storageLevel.lineRange)
             storageLevel.write.data.valid           := True
             storageLevel.write.data.virtualAddress  := virtual(specLevel.virtualOffset + log2Up(storageLevel.slp.sets), widthOf(storageLevel.write.data.virtualAddress) bits)
-            storageLevel.write.data.physicalAddress := (load.levelToPhysicalAddress(levelId) >> specLevel.virtualOffset).resized
-            storageLevel.write.data.allowRead       := load.flags.R
-            storageLevel.write.data.allowWrite      := load.flags.W && load.flags.D
-            storageLevel.write.data.allowExecute    := load.flags.X
-            storageLevel.write.data.allowUser       := load.flags.U
+            storageLevel.write.data.physicalAddress := (physicalAddress >> specLevel.virtualOffset).resized
+            storageLevel.write.data.allowRead       := flags.R
+            storageLevel.write.data.allowWrite      := flags.W
+            storageLevel.write.data.allowExecute    := flags.X
+            storageLevel.write.data.allowUser       := flags.U
 
             when(pageFault || accessFault || !storageEnable) {
               storageLevel.write.mask := 0
@@ -519,7 +529,7 @@ class MmuPlugin(var spec : MmuSpec,
             }
           }
         }
-
+        
         RSP(levelId) whenIsActive{
           if(levelId == 0) load.exception setWhen(!load.leaf)
           when(load.rsp.valid){
@@ -527,10 +537,50 @@ class MmuPlugin(var spec : MmuSpec,
               goto(CMD(levelId))
             } otherwise {
               levelId match {
-                case 0 => doneLogic
+                case 0 => {
+                  refillPorts.onMask(portOhReg){port =>
+                    port.rsp.valid := True
+                  }
+                  refillPorts.map(_.rsp).foreach { o =>
+                    o.pageFault := pageFaultUnbuffered
+                    o.accessFault := accessFaultUnbuffered
+                    o.pf  := pageFaultUnbuffered
+                    o.ae_ptw    := accessFaultUnbuffered && !leafUnbuffered
+                    o.ae_final  := accessFaultUnbuffered && leafUnbuffered //Note so sure
+                    o.level := spec.levels.size - 1 - levelId
+                  }
+                  pteFault := pteFaultUnbuffered
+                  pteReadError := pteReadErrorUnbuffered
+                  pageFault := pageFaultUnbuffered
+                  accessFault := accessFaultUnbuffered
+                  leaf := leafUnbuffered
+                  leafAccessFault := leafAccessFaultUnbuffered
+                  flags := flagsUnbuffered
+                  physicalAddress := physicalAddressUnbuffered
+                  goto(UPDATE(levelId))
+                }
                 case _ => {
                   when(load.leaf || load.exception) {
-                    doneLogic
+                    refillPorts.onMask(portOhReg){port =>
+                      port.rsp.valid := True
+                    }
+                    refillPorts.map(_.rsp).foreach { o =>
+                      o.pageFault := pageFaultUnbuffered
+                      o.accessFault := accessFaultUnbuffered
+                      o.pf  := pageFaultUnbuffered
+                      o.ae_ptw    := accessFaultUnbuffered && !leafUnbuffered
+                      o.ae_final  := accessFaultUnbuffered && leafUnbuffered //Note so sure
+                      o.level := spec.levels.size - 1 - levelId
+                    }
+                    pteFault := pteFaultUnbuffered
+                    pteReadError := pteReadErrorUnbuffered
+                    pageFault := pageFaultUnbuffered
+                    accessFault := accessFaultUnbuffered
+                    leaf := leafUnbuffered
+                    leafAccessFault := leafAccessFaultUnbuffered
+                    flags := flagsUnbuffered
+                    physicalAddress := physicalAddressUnbuffered
+                    goto(UPDATE(levelId))
                   } otherwise {
                     val targetLevelId = levelId - 1
                     val targetLevel = spec.levels(targetLevelId)
@@ -542,6 +592,14 @@ class MmuPlugin(var spec : MmuSpec,
               }
             }
           }
+        }
+
+        UPDATE(levelId) whenIsActive {
+          goto(DONE(levelId))
+        }
+
+        DONE(levelId) whenIsActive{
+          doneLogic
         }
       }
     }
