@@ -17,8 +17,6 @@ import vexiiriscv.riscv.Riscv._
 import vexiiriscv.misc.TrapArg
 
 import scala.collection.mutable.ArrayBuffer
-import vexiiriscv.execute.lsu.AguPlugin.STORE
-import vexiiriscv.execute.lsu.AguPlugin
 
 case class MmuStorageLevel(id : Int,
                            ways : Int,
@@ -377,6 +375,7 @@ class MmuPlugin(var spec : MmuSpec,
       val portOhReg = Reg(Bits(refillPorts.size bits))
       val storageOhReg = Reg(Bits(storages.size bits))
       val storageEnable = Reg(Bool())
+      val mmuArg = Reg(Bits(2 bits))
 
       arbiter.io.output.ready := False
       IDLE whenIsActive {
@@ -385,6 +384,7 @@ class MmuPlugin(var spec : MmuSpec,
           storageOhReg := UIntToOh(arbiter.io.output.storageId)
           storageEnable := arbiter.io.output.storageEnable
           virtual := arbiter.io.output.address
+          mmuArg := arbiter.io.output.mmuArg
           load.address := (satp.ppn @@ spec.levels.last.vpn(arbiter.io.output.address) @@ U(0, log2Up(spec.entryBytes) bits)).resized
           arbiter.io.output.ready := True
           goto(CMD(spec.levels.size - 1))
@@ -438,6 +438,12 @@ class MmuPlugin(var spec : MmuSpec,
         }
       }
 
+      val update = new Area {
+        val rspUnbuffered = accessBus.rsp
+        val rsp = rspUnbuffered.stage()
+        def cmd = accessBus.cmd
+      }
+
       for (port <- refillPorts; rsp = port.rsp) {
         rsp.valid := False
         rsp.pageFault.assignDontCare()
@@ -477,12 +483,13 @@ class MmuPlugin(var spec : MmuSpec,
     }
 
       val fetch = for((level, levelId) <- spec.levels.zipWithIndex) yield new Area{
-        val pteFaultUnbuffered = (load.exception || load.levelException(levelId) || !load.flags.A)
+        val pteFaultUnbuffered = (load.exception || load.levelException(levelId))
         val pteReadErrorUnbuffered = load.rsp.error
         val leafAccessFaultUnbuffered = load.levelToPhysicalAddress(levelId).drop(physicalWidth) =/= 0 //levelToPhysicalAddress is used to emit fault when the final translated address it outside the range of the physical addresses
         val flagsUnbuffered = load.flags
         val leafUnbuffered = load.leaf
         val physicalAddressUnbuffered = load.levelToPhysicalAddress(levelId)
+        val readedDataUnbuffered = load.readed
 
         val pteFault = Reg(Bool)
         val pteReadError = Reg(Bool)
@@ -490,6 +497,7 @@ class MmuPlugin(var spec : MmuSpec,
         val flags = Reg(MmuEntryFlags())
         val leaf = Reg(Bool)
         val physicalAddress = Reg(UInt())
+        val readedData = Reg(Bits())
 
         val pageFaultUnbuffered = !pteReadErrorUnbuffered && pteFaultUnbuffered
         val accessFaultUnbuffered = pteReadErrorUnbuffered || !pteFaultUnbuffered && leafAccessFaultUnbuffered
@@ -571,6 +579,7 @@ class MmuPlugin(var spec : MmuSpec,
                   leafAccessFault := leafAccessFaultUnbuffered
                   flags := flagsUnbuffered
                   physicalAddress := physicalAddressUnbuffered
+                  readedData := readedDataUnbuffered
                   goto(UPDATE(levelId))
                 }
                 case _ => {
@@ -594,6 +603,7 @@ class MmuPlugin(var spec : MmuSpec,
                     leafAccessFault := leafAccessFaultUnbuffered
                     flags := flagsUnbuffered
                     physicalAddress := physicalAddressUnbuffered
+                    readedData := readedDataUnbuffered
                     goto(UPDATE(levelId))
                   } otherwise {
                     val targetLevelId = levelId - 1
@@ -609,7 +619,14 @@ class MmuPlugin(var spec : MmuSpec,
         }
 
         UPDATE(levelId) whenIsActive {
-          goto(DONE(levelId))
+          update.cmd.write := True
+          update.cmd.valid := True
+          update.cmd.data := readedData
+          update.cmd.data(6).set // PTE_A bit
+          update.cmd.data(7).setWhen(mmuArg === 1) // PTE_D bit
+          when(update.cmd.valid && update.cmd.ready) {
+            goto(DONE(levelId))
+          }
         }
 
         DONE(levelId) whenIsActive{
