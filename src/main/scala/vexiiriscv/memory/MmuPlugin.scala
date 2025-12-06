@@ -374,6 +374,7 @@ class MmuPlugin(var spec : MmuSpec,
       val portOhReg = Reg(Bits(refillPorts.size bits))
       val storageOhReg = Reg(Bits(storages.size bits))
       val storageEnable = Reg(Bool())
+      val mmuArg = Reg(Bits(2 bits))
 
       arbiter.io.output.ready := False
       IDLE whenIsActive {
@@ -382,6 +383,7 @@ class MmuPlugin(var spec : MmuSpec,
           storageOhReg := UIntToOh(arbiter.io.output.storageId)
           storageEnable := arbiter.io.output.storageEnable
           virtual := arbiter.io.output.address
+          mmuArg := arbiter.io.output.mmuArg
           load.address := (satp.ppn @@ spec.levels.last.vpn(arbiter.io.output.address) @@ U(0, log2Up(spec.entryBytes) bits)).resized
           arbiter.io.output.ready := True
           goto(CMD(spec.levels.size - 1))
@@ -434,6 +436,12 @@ class MmuPlugin(var spec : MmuSpec,
             }
           }
         }
+      }
+
+      val update = new Area {
+        val rspUnbuffered = accessBus.rsp
+        val rsp = rspUnbuffered.stage()
+        def cmd = accessBus.cmd
       }
 
       for (port <- refillPorts; rsp = port.rsp) {
@@ -558,8 +566,15 @@ class MmuPlugin(var spec : MmuSpec,
           }
         }
 
-        UPDATE(levelId) whenIsActive{
-          goto(DONE(levelId))
+        UPDATE(levelId) whenIsActive {
+          update.cmd.write := True
+          update.cmd.valid := True
+          update.cmd.data := load.rsp.data
+          update.cmd.data(6).set // PTE_A bit
+          update.cmd.data(7).setWhen(mmuArg === 1) // PTE_D bit
+          when(update.cmd.valid && update.cmd.ready) {
+            goto(DONE(levelId))
+          }
         }
 
         DONE(levelId) whenIsActive{

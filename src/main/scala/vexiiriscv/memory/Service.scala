@@ -154,7 +154,7 @@ case class DBusAccessCmd() extends Bundle {
   val address = Global.PHYSICAL_ADDRESS()
   val write = Bool()
   val data = Bits(Riscv.LSLEN bits)
-  val size = UInt(2 bits)
+   val size = UInt(2 bits)
 }
 
 case class DBusAccessRsp(refillCount : Int) extends Bundle {
