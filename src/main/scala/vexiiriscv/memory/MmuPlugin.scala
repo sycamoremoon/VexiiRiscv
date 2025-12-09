@@ -355,7 +355,7 @@ class MmuPlugin(var spec : MmuSpec,
     // Implement the TLB storage refill FSM
     val refill = new StateMachine{
       val IDLE = new State
-      val CMD, RSP = List.fill(spec.levels.size)(new State)
+      val CMD, RSP, DONE = List.fill(spec.levels.size)(new State)
 
       val busy = !isActive(IDLE)
       val virtual = Reg(UInt(MIXED_WIDTH bits))
@@ -397,10 +397,13 @@ class MmuPlugin(var spec : MmuSpec,
 
       val load = new Area{
         val address = Reg(UInt(PHYSICAL_WIDTH bits))
+        val overflow = Bool()
 
         def cmd = accessBus.cmd
         val rspUnbuffered = accessBus.rsp
-        val rsp = rspUnbuffered.stage()
+        val rspStream = rspUnbuffered.toStream(overflow)
+        val rsp = rspStream.stage()
+        rsp.ready := False
         val readed = rsp.data.subdivideIn(spec.entryBytes*8 bits).read((address >> log2Up(spec.entryBytes)).resized)
 
         when(rspUnbuffered.valid && rspUnbuffered.redo) {
@@ -474,16 +477,13 @@ class MmuPlugin(var spec : MmuSpec,
     }
 
       val fetch = for((level, levelId) <- spec.levels.zipWithIndex) yield new Area{
-        val pteFault = (load.exception || load.levelException(levelId) || !load.flags.A)
+        val pteFault = (load.exception || load.levelException(levelId))
         val pteReadError = load.rsp.error
         val leafAccessFault = load.levelToPhysicalAddress(levelId).drop(physicalWidth) =/= 0 //levelToPhysicalAddress is used to emit fault when the final translated address it outside the range of the physical addresses
         val pageFault = !pteReadError && pteFault
         val accessFault = pteReadError || !pteFault && leafAccessFault
 
         def doneLogic() : Unit = {
-          refillPorts.onMask(portOhReg){port =>
-            port.rsp.valid := True
-          }
 
           refillPorts.map(_.rsp).foreach { o =>
             o.pageFault := pageFault
@@ -538,10 +538,13 @@ class MmuPlugin(var spec : MmuSpec,
               goto(CMD(levelId))
             } otherwise {
               levelId match {
-                case 0 => doneLogic
+                case 0 => goto(DONE(levelId))
                 case _ => {
                   when(load.leaf || load.exception) {
-                    doneLogic
+                    refillPorts.onMask(portOhReg){port =>
+                      port.rsp.valid := True
+                    }
+                    goto(DONE(levelId))
                   } otherwise {
                     val targetLevelId = levelId - 1
                     val targetLevel = spec.levels(targetLevelId)
@@ -553,6 +556,11 @@ class MmuPlugin(var spec : MmuSpec,
               }
             }
           }
+        }
+
+        DONE(levelId) whenIsActive{
+          load.rsp.ready := True
+          doneLogic
         }
       }
     }
