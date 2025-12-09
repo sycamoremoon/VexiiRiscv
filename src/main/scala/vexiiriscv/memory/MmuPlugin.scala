@@ -355,7 +355,7 @@ class MmuPlugin(var spec : MmuSpec,
     // Implement the TLB storage refill FSM
     val refill = new StateMachine{
       val IDLE = new State
-      val CMD, RSP, DONE = List.fill(spec.levels.size)(new State)
+      val CMD, RSP, UPDATE, DONE = List.fill(spec.levels.size)(new State)
 
       val busy = !isActive(IDLE)
       val virtual = Reg(UInt(MIXED_WIDTH bits))
@@ -473,7 +473,7 @@ class MmuPlugin(var spec : MmuSpec,
     }
 
       val fetch = for((level, levelId) <- spec.levels.zipWithIndex) yield new Area{
-        val pteFault = (load.exception || load.levelException(levelId) || !load.flags.A)
+        val pteFault = (load.exception || load.levelException(levelId))
         val pteReadError = load.rsp.error
         val leafAccessFault = load.levelToPhysicalAddress(levelId).drop(physicalWidth) =/= 0 //levelToPhysicalAddress is used to emit fault when the final translated address it outside the range of the physical addresses
         val pageFault = !pteReadError && pteFault
@@ -554,6 +554,10 @@ class MmuPlugin(var spec : MmuSpec,
               }
             }
           }
+        }
+
+        UPDATE(levelId) whenIsActive{
+          goto(DONE(levelId))
         }
 
         DONE(levelId) whenIsActive{
