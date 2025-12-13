@@ -439,8 +439,6 @@ class MmuPlugin(var spec : MmuSpec,
       }
 
       val update = new Area {
-        val rspUnbuffered = accessBus.rsp
-        val rsp = rspUnbuffered.stage()
         def cmd = accessBus.cmd
       }
 
@@ -567,17 +565,33 @@ class MmuPlugin(var spec : MmuSpec,
         }
 
         UPDATE(levelId) whenIsActive {
-          update.cmd.write := True
-          update.cmd.valid := True
-          update.cmd.data := load.rsp.data
-          update.cmd.data(6).set // PTE_A bit
-          update.cmd.data(7).setWhen(mmuArg === 1) // PTE_D bit
-          when(update.cmd.valid && update.cmd.ready) {
+          //update.cmd.write := True
+          //update.cmd.valid := True
+          //update.cmd.data := load.rsp.data
+          //update.cmd.data(6).set // PTE_A bit
+          //update.cmd.data(7).setWhen(mmuArg === 1) // PTE_D bit
+          //when(update.cmd.ready) {
+          //  goto(DONE(levelId))
+          //}
+          
+          when(mmuArg === 1) {
+            update.cmd.write := True
+            update.cmd.valid := True
+            update.cmd.data := load.rsp.data
+            update.cmd.data(6).set // PTE_A bit
+            update.cmd.data(7).set // PTE_D bit
+            when(update.cmd.ready) {
+              goto(DONE(levelId))
+            }
+          } otherwise {
             goto(DONE(levelId))
           }
         }
 
         DONE(levelId) whenIsActive{
+          when(mmuArg === 1) {
+            load.flags.D := True
+          }
           load.rsp.ready := True
           doneLogic
         }
