@@ -342,6 +342,59 @@ class MmuPlugin(var spec : MmuSpec,
       }
     }
 
+    // Common DBus Access Interface
+    val load = new Area {
+      val address = Reg(UInt(PHYSICAL_WIDTH bits))
+
+      def cmd = accessBus.cmd
+      val rspUnbuffered = accessBus.rsp
+      val rsp = rspUnbuffered.toStream.stage()
+      rsp.ready := False
+      val readed = rsp.data.subdivideIn(spec.entryBytes*8 bits).read((address >> log2Up(spec.entryBytes)).resized)
+
+      cmd.valid             := False
+      cmd.address           := address.resized
+      cmd.size              := U(log2Up(spec.entryBytes))
+
+      val flags = readed.resized.as(MmuEntryFlags())
+      val leaf = flags.R || flags.X
+      val reservedFault = (readed & spec.pteReserved).orR
+      val exception = !flags.V || (!flags.R && flags.W) || rsp.error || (!leaf && (flags.D | flags.A | flags.U)) || reservedFault
+
+
+      val cacheRefill = Reg(Bits(access.accessRefillCount bits)) init(0)
+      val cacheRefillAny = Reg(Bool()) init(False)
+
+      val cacheRefillSet = cacheRefill.getZero
+      val cacheRefillAnySet = False
+
+      cacheRefill    := (cacheRefill | cacheRefillSet) & ~access.accessWake
+      cacheRefillAny := (cacheRefillAny | cacheRefillAnySet) & !access.accessWake.orR
+
+      when(rspUnbuffered.valid && rspUnbuffered.redo) {
+        cacheRefillSet    := rspUnbuffered.waitSlot
+        cacheRefillAnySet := rspUnbuffered.waitAny
+      }
+
+      def levelPhysicalAddress(virtual: UInt) = new Area {
+        val levelToPhysicalAddress = List.fill(spec.levels.size)(UInt(spec.physicalWidth bits))
+        val levelException = List.fill(spec.levels.size)(False)
+        val nextLevelBase = U(0, PHYSICAL_WIDTH bits)
+        for((level, id) <- spec.levels.zipWithIndex) {
+          nextLevelBase(physCap(level.physicalRange)) := readed(level.entryRange).asUInt.resized
+          levelToPhysicalAddress(id) := 0
+          for((e, eId) <- spec.levels.zipWithIndex){
+            if(eId < id) {
+              levelException(id) setWhen(readed(e.entryRange) =/= 0)
+              levelToPhysicalAddress(id)(e.physicalRange) := e.vpn(virtual)
+            } else {
+              levelToPhysicalAddress(id)(e.physicalRange) := readed(e.entryRange).asUInt
+            }
+          }
+        }
+      }
+    }
+
     // Implement the TLB storage refill FSM
     val refill = new StateMachine{
       val IDLE = new State
@@ -349,14 +402,6 @@ class MmuPlugin(var spec : MmuSpec,
 
       val busy = !isActive(IDLE)
       val virtual = Reg(UInt(MIXED_WIDTH bits))
-
-      val cacheRefill = Reg(Bits(access.accessRefillCount bits)) init(0)
-      val cacheRefillAny = Reg(Bool()) init(False)
-
-      val cacheRefillSet = cacheRefill.getZero
-      val cacheRefillAnySet = False
-      cacheRefill    := (cacheRefill | cacheRefillSet) & ~access.accessWake
-      cacheRefillAny := (cacheRefillAny | cacheRefillAnySet) & !access.accessWake.orR
 
       setEntry(IDLE)
 
@@ -385,44 +430,7 @@ class MmuPlugin(var spec : MmuSpec,
         }
       })
 
-      val load = new Area{
-        val address = Reg(UInt(PHYSICAL_WIDTH bits))
-
-        def cmd = accessBus.cmd
-        val rspUnbuffered = accessBus.rsp
-        val rsp = rspUnbuffered.toStream.stage()
-        rsp.ready := False
-        val readed = rsp.data.subdivideIn(spec.entryBytes*8 bits).read((address >> log2Up(spec.entryBytes)).resized)
-
-        when(rspUnbuffered.valid && rspUnbuffered.redo) {
-          cacheRefillSet    := rspUnbuffered.waitSlot
-          cacheRefillAnySet := rspUnbuffered.waitAny
-        }
-
-        cmd.valid             := False
-        cmd.address           := address.resized
-        cmd.size              := U(log2Up(spec.entryBytes))
-
-        val flags = readed.resized.as(MmuEntryFlags())
-        val leaf = flags.R || flags.X
-        val reservedFault = (readed & spec.pteReserved).orR
-        val exception = !flags.V || (!flags.R && flags.W) || rsp.error || (!leaf && (flags.D | flags.A | flags.U)) || reservedFault
-        val levelToPhysicalAddress = List.fill(spec.levels.size)(UInt(spec.physicalWidth bits))
-        val levelException = List.fill(spec.levels.size)(False)
-        val nextLevelBase = U(0, PHYSICAL_WIDTH bits)
-        for((level, id) <- spec.levels.zipWithIndex) {
-          nextLevelBase(physCap(level.physicalRange)) := readed(level.entryRange).asUInt.resized
-          levelToPhysicalAddress(id) := 0
-          for((e, eId) <- spec.levels.zipWithIndex){
-            if(eId < id) {
-              levelException(id) setWhen(readed(e.entryRange) =/= 0)
-              levelToPhysicalAddress(id)(e.physicalRange) := e.vpn(virtual)
-            } else {
-              levelToPhysicalAddress(id)(e.physicalRange) := readed(e.entryRange).asUInt
-            }
-          }
-        }
-      }
+      val pte = load.levelPhysicalAddress(virtual)
 
       for (port <- refillPorts; rsp = port.rsp) {
         rsp.valid := False
@@ -463,9 +471,9 @@ class MmuPlugin(var spec : MmuSpec,
     }
 
       val fetch = for((level, levelId) <- spec.levels.zipWithIndex) yield new Area{
-        val pteFault = (load.exception || load.levelException(levelId) || !load.flags.A) || (levelId == 0).mux(!load.leaf, False)
+        val pteFault = (load.exception || pte.levelException(levelId) || !load.flags.A) || (levelId == 0).mux(!load.leaf, False)
         val pteReadError = load.rsp.error
-        val leafAccessFault = load.levelToPhysicalAddress(levelId).drop(physicalWidth) =/= 0 //levelToPhysicalAddress is used to emit fault when the final translated address it outside the range of the physical addresses
+        val leafAccessFault = pte.levelToPhysicalAddress(levelId).drop(physicalWidth) =/= 0 //levelToPhysicalAddress is used to emit fault when the final translated address it outside the range of the physical addresses
         val pageFault = !pteReadError && pteFault
         val accessFault = pteReadError || !pteFault && leafAccessFault
 
@@ -493,7 +501,7 @@ class MmuPlugin(var spec : MmuSpec,
             storageLevel.write.address              := virtual(storageLevel.lineRange)
             storageLevel.write.data.valid           := True
             storageLevel.write.data.virtualAddress  := virtual(specLevel.virtualOffset + log2Up(storageLevel.slp.sets), widthOf(storageLevel.write.data.virtualAddress) bits)
-            storageLevel.write.data.physicalAddress := (load.levelToPhysicalAddress(levelId) >> specLevel.virtualOffset).resized
+            storageLevel.write.data.physicalAddress := (pte.levelToPhysicalAddress(levelId) >> specLevel.virtualOffset).resized
             storageLevel.write.data.allowRead       := load.flags.R
             storageLevel.write.data.allowWrite      := load.flags.W && load.flags.D
             storageLevel.write.data.allowExecute    := load.flags.X
@@ -510,7 +518,7 @@ class MmuPlugin(var spec : MmuSpec,
         }
 
         CMD(levelId) whenIsActive{
-          when(cacheRefill === 0 && cacheRefillAny === False) {
+          when(load.cacheRefill === 0 && load.cacheRefillAny === False) {
             load.cmd.valid := True
             when(load.cmd.ready) {
               goto(RSP(levelId))
@@ -533,7 +541,7 @@ class MmuPlugin(var spec : MmuSpec,
                   } otherwise {
                     val targetLevelId = levelId - 1
                     val targetLevel = spec.levels(targetLevelId)
-                    load.address := load.nextLevelBase
+                    load.address := pte.nextLevelBase
                     load.address(log2Up(spec.entryBytes), targetLevel.physicalWidth bits) := targetLevel.vpn(virtual)
                     load.rsp.ready := True
                     goto(CMD(targetLevelId))
