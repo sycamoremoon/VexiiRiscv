@@ -22,6 +22,7 @@ import vexiiriscv.riscv.CSR
 import vexiiriscv.schedule.ReschedulePlugin
 
 import scala.collection.mutable.ArrayBuffer
+import vexiiriscv.memory.AddressTranslationReq
 
 case class FetchL1InvalidationCmd() extends Bundle //Empty for now, as we flush the whole instruction cache
 case class FetchL1InvalidationBus() extends Bundle {
@@ -335,10 +336,11 @@ class FetchL1Plugin(var translationStorageParameter: Any,
       }
     }
 
+    val request = AddressTranslationReq(MIXED_PC_SOLVED, pp.fetch(readAt).insert(False))
+
     val translationPort = ats.newTranslationPort(
       nodes = Seq(pp.fetch(readAt).down, pp.fetch(readAt+1).down),
-      rawAddress = MIXED_PC_SOLVED,
-      forcePhysical = pp.fetch(readAt).insert(False),
+      req = request,
       usage = AddressTranslationPortUsage.FETCH,
       portSpec = translationPortParameter,
       storageSpec = translationStorage
