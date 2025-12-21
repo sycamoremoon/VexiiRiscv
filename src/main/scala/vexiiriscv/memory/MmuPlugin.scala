@@ -546,10 +546,10 @@ class MmuPlugin(var spec : MmuSpec,
               goto(CMD(levelId))
             } otherwise {
               levelId match {
-                case 0 => goto(DONE(levelId))
+                case 0 => goto(UPDATE(levelId))
                 case _ => {
                   when(load.leaf || load.exception) {
-                    goto(DONE(levelId))
+                    goto(UPDATE(levelId))
                   } otherwise {
                     val targetLevelId = levelId - 1
                     val targetLevel = spec.levels(targetLevelId)
@@ -564,16 +564,7 @@ class MmuPlugin(var spec : MmuSpec,
           }
         }
 
-        UPDATE(levelId) whenIsActive {
-          //update.cmd.write := True
-          //update.cmd.valid := True
-          //update.cmd.data := load.rsp.data
-          //update.cmd.data(6).set // PTE_A bit
-          //update.cmd.data(7).setWhen(mmuArg === 1) // PTE_D bit
-          //when(update.cmd.ready) {
-          //  goto(DONE(levelId))
-          //}
-          
+        UPDATE(levelId) whenIsActive {  
           when(mmuArg === 1) {
             update.cmd.write := True
             update.cmd.valid := True

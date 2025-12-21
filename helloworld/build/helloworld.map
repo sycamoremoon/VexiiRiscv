@@ -1,0 +1,155 @@
+Archive member included to satisfy reference by file (symbol)
+
+/opt/riscv/bin/../lib/gcc/riscv64-unknown-elf/8.3.0/../../../../riscv64-unknown-elf/lib/rv32i/ilp32/libc.a(lib_a-init.o)
+                              build//home/damon/VexiiRiscv/ext/NaxSoftware/baremetal/common/start.o (__libc_init_array)
+
+Memory Configuration
+
+Name             Origin             Length             Attributes
+ram              0x0000000080000000 0x0000000000040000 axwl !r
+*default*        0x0000000000000000 0xffffffffffffffff
+
+Linker script and memory map
+
+LOAD build//home/damon/VexiiRiscv/helloworld/src/main.o
+LOAD build//home/damon/VexiiRiscv/ext/NaxSoftware/baremetal/common/start.o
+LOAD /opt/riscv/bin/../lib/gcc/riscv64-unknown-elf/8.3.0/../../../../riscv64-unknown-elf/lib/rv32i/ilp32/libc.a
+LOAD /opt/riscv/bin/../lib/gcc/riscv64-unknown-elf/8.3.0/rv32i/ilp32/libgcc.a
+                0x0000000000001000                __stack_size = DEFINED (__stack_size)?__stack_size:0x1000
+
+.init           0x0000000080000000       0x80
+ *(SORT_NONE(.init))
+ .init          0x0000000080000000       0x80 build//home/damon/VexiiRiscv/ext/NaxSoftware/baremetal/common/start.o
+                0x0000000080000000                _start
+                0x000000008000006c                pass
+                0x0000000080000074                fail
+                0x000000008000007c                _init
+
+.text           0x0000000080000080       0xc4
+ *(.text.unlikely .text.unlikely.*)
+ *(.text.startup .text.startup.*)
+ .text.startup  0x0000000080000080       0x30 build//home/damon/VexiiRiscv/helloworld/src/main.o
+                0x0000000080000080                main
+ *(.text .text.*)
+ .text          0x00000000800000b0        0x0 build//home/damon/VexiiRiscv/helloworld/src/main.o
+ .text          0x00000000800000b0        0x0 build//home/damon/VexiiRiscv/ext/NaxSoftware/baremetal/common/start.o
+ .text          0x00000000800000b0       0x94 /opt/riscv/bin/../lib/gcc/riscv64-unknown-elf/8.3.0/../../../../riscv64-unknown-elf/lib/rv32i/ilp32/libc.a(lib_a-init.o)
+                0x00000000800000b0                __libc_init_array
+ *(.gnu.linkonce.t.*)
+ *(.note.gnu.build-id)
+
+.rela.dyn       0x0000000080000144        0x0
+ .rela.init     0x0000000080000144        0x0 build//home/damon/VexiiRiscv/helloworld/src/main.o
+ .rela.text     0x0000000080000144        0x0 build//home/damon/VexiiRiscv/helloworld/src/main.o
+
+.fini
+ *(SORT_NONE(.fini))
+                [!provide]                        PROVIDE (__etext = .)
+                [!provide]                        PROVIDE (_etext = .)
+                [!provide]                        PROVIDE (etext = .)
+                0x0000000080000144                . = ALIGN (0x4)
+
+.preinit_array  0x0000000080000144        0x0
+                0x0000000080000144                PROVIDE (__preinit_array_start = .)
+ *(.preinit_array)
+                0x0000000080000144                PROVIDE (__preinit_array_end = .)
+
+.init_array     0x0000000080000144        0x0
+                0x0000000080000144                PROVIDE (__init_array_start = .)
+ *(SORT_BY_INIT_PRIORITY(.init_array.*) SORT_BY_INIT_PRIORITY(.ctors.*))
+ *(.init_array EXCLUDE_FILE(*crtend?.o *crtend.o *crtbegin?.o *crtbegin.o) .ctors)
+                0x0000000080000144                PROVIDE (__init_array_end = .)
+
+.fini_array     0x0000000080000144        0x0
+                [!provide]                        PROVIDE (__fini_array_start = .)
+ *(SORT_BY_INIT_PRIORITY(.fini_array.*) SORT_BY_INIT_PRIORITY(.dtors.*))
+ *(.fini_array EXCLUDE_FILE(*crtend?.o *crtend.o *crtbegin?.o *crtbegin.o) .dtors)
+                [!provide]                        PROVIDE (__fini_array_end = .)
+
+.ctors
+ *crtbegin.o(.ctors)
+ *crtbegin?.o(.ctors)
+ *(EXCLUDE_FILE(*crtend?.o *crtend.o) .ctors)
+ *(SORT_BY_NAME(.ctors.*))
+ *(.ctors)
+
+.dtors
+ *crtbegin.o(.dtors)
+ *crtbegin?.o(.dtors)
+ *(EXCLUDE_FILE(*crtend?.o *crtend.o) .dtors)
+ *(SORT_BY_NAME(.dtors.*))
+ *(.dtors)
+
+.lalign         0x0000000080000144        0x0
+                0x0000000080000144                . = ALIGN (0x4)
+                0x0000000080000144                PROVIDE (_data_lma = .)
+
+.dalign         0x0000000080000144        0x0
+                0x0000000080000144                . = ALIGN (0x4)
+                0x0000000080000144                PROVIDE (_data = .)
+
+.data           0x0000000080000144       0x10
+ *(.rdata)
+ *(.rodata .rodata.*)
+ .rodata.str1.4
+                0x0000000080000144        0xc build//home/damon/VexiiRiscv/helloworld/src/main.o
+ *(.gnu.linkonce.r.*)
+ *(.data .data.*)
+ .data          0x0000000080000150        0x0 build//home/damon/VexiiRiscv/helloworld/src/main.o
+ .data          0x0000000080000150        0x0 build//home/damon/VexiiRiscv/ext/NaxSoftware/baremetal/common/start.o
+ .data          0x0000000080000150        0x0 /opt/riscv/bin/../lib/gcc/riscv64-unknown-elf/8.3.0/../../../../riscv64-unknown-elf/lib/rv32i/ilp32/libc.a(lib_a-init.o)
+ *(.gnu.linkonce.d.*)
+                0x0000000080000150                . = ALIGN (0x8)
+ *fill*         0x0000000080000150        0x0 
+                0x0000000080000940                PROVIDE (__global_pointer$ = (. + 0x7f0))
+ *(.sdata .sdata.*)
+ *(.gnu.linkonce.s.*)
+                0x0000000080000150                . = ALIGN (0x8)
+ *(.srodata.cst16)
+ *(.srodata.cst8)
+ *(.srodata.cst4)
+ *(.srodata.cst2)
+ *(.srodata .srodata.*)
+                0x0000000080000154                . = (. + 0x4)
+ *fill*         0x0000000080000150        0x4 
+                0x0000000080000154                . = ALIGN (0x4)
+                0x0000000080000154                PROVIDE (_edata = .)
+                [!provide]                        PROVIDE (edata = .)
+                [!provide]                        PROVIDE (_fbss = .)
+                0x0000000080000154                PROVIDE (__bss_start = .)
+
+.bss            0x0000000080000154        0x0
+ *(.sbss*)
+ *(.gnu.linkonce.sb.*)
+ *(.bss .bss.*)
+ .bss           0x0000000080000154        0x0 build//home/damon/VexiiRiscv/helloworld/src/main.o
+ .bss           0x0000000080000154        0x0 build//home/damon/VexiiRiscv/ext/NaxSoftware/baremetal/common/start.o
+ .bss           0x0000000080000154        0x0 /opt/riscv/bin/../lib/gcc/riscv64-unknown-elf/8.3.0/../../../../riscv64-unknown-elf/lib/rv32i/ilp32/libc.a(lib_a-init.o)
+ *(.gnu.linkonce.b.*)
+ *(COMMON)
+                0x0000000080000154                . = ALIGN (0x4)
+                0x0000000080000158                . = ALIGN (0x8)
+                0x0000000080000158                PROVIDE (_end = .)
+                [!provide]                        PROVIDE (end = .)
+
+.stack          0x0000000080000160     0x1000
+                [!provide]                        PROVIDE (_heap_end = .)
+                0x0000000000001000                . = __stack_size
+ *fill*         0x0000000080000160     0x1000 
+                0x0000000080001160                PROVIDE (_sp = .)
+                0x0000000080001160                __freertos_irq_stack_top = .
+OUTPUT(build/helloworld.elf elf32-littleriscv)
+
+.comment        0x0000000000000000       0x28
+ .comment       0x0000000000000000       0x28 build//home/damon/VexiiRiscv/helloworld/src/main.o
+                                         0x29 (size before relaxing)
+ .comment       0x0000000000000028       0x29 /opt/riscv/bin/../lib/gcc/riscv64-unknown-elf/8.3.0/../../../../riscv64-unknown-elf/lib/rv32i/ilp32/libc.a(lib_a-init.o)
+
+.riscv.attributes
+                0x0000000000000000       0x1c
+ .riscv.attributes
+                0x0000000000000000       0x1c build//home/damon/VexiiRiscv/helloworld/src/main.o
+ .riscv.attributes
+                0x000000000000001c       0x1a build//home/damon/VexiiRiscv/ext/NaxSoftware/baremetal/common/start.o
+ .riscv.attributes
+                0x0000000000000036       0x1c /opt/riscv/bin/../lib/gcc/riscv64-unknown-elf/8.3.0/../../../../riscv64-unknown-elf/lib/rv32i/ilp32/libc.a(lib_a-init.o)

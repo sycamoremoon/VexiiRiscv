@@ -141,6 +141,7 @@ class FetchL1Plugin(var translationStorageParameter: Any,
     val PREFETCH = Payload(Bool())
     val MIXED_PC = Payload(Global.PC)
     val isStoreFalse = Payload(Bool())
+    pp.fetch(0)(isStoreFalse) := False
     def MIXED_PC_SOLVED = prefetcher.nonEmpty.mux(MIXED_PC, WORD_PC)
 
     val BANKS_MUXES = Payload(Vec.fill(bankCount)(Bits(cpuWordWidth bits)))
@@ -335,7 +336,6 @@ class FetchL1Plugin(var translationStorageParameter: Any,
         }
       }
     }
-
 
 
 
