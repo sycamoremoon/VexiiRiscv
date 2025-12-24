@@ -747,9 +747,10 @@ class TrapPlugin(val trapAt : Int) extends FiberPlugin with TrapService {
           XRET_EPC.whenIsActive{
             crsPorts.read.valid := True
             val addressMapping = mutable.LinkedHashMap[Int, UInt](
-            PrivilegeMode.M -> csr.m.epc.getAddress()
+              PrivilegeMode.M -> csr.m.epc.getAddress()
             )
             if (priv.p.withSupervisor) addressMapping += PrivilegeMode.S -> csr.s.epc.getAddress()
+            if (priv.p.withHypervisor) addressMapping += PrivilegeMode.VS -> csr.vs.epc.getAddress()
             crsPorts.read.address := privilegeMux(addressMapping, xretPrivilege)
             when(crsPorts.read.ready) {
               goto(XRET_APPLY)
@@ -762,16 +763,23 @@ class TrapPlugin(val trapAt : Int) extends FiberPlugin with TrapService {
 
             csr.privilege := pending.xret.targetPrivilege
             csr.xretAwayFromMachine setWhen (pending.xret.targetPrivilege =/= PrivilegeMode.M)
-            switch(pending.state.arg(2 downto 0)) {
+            switch(pending.state.arg(2 downto 0).asSInt) {
               is(PrivilegeMode.M) {
-                if(priv.p.withUser) csr.m.status.mpp := 0
+                if (priv.p.withUser) csr.m.status.mpp := 0
+                if (priv.p.withHypervisor) csr.m.status.mpv := False
                 csr.m.status.mie := csr.m.status.mpie
                 csr.m.status.mpie := True
               }
               priv.p.withSupervisor generate is(PrivilegeMode.S) {
                 csr.s.status.spp := U"0"
+                if (priv.p.withHypervisor) csr.h.status.spv := False
                 csr.s.status.sie := csr.s.status.spie
                 csr.s.status.spie := True
+              }
+              priv.p.withHypervisor generate is(PrivilegeMode.VS) {
+                csr.vs.status.spp := U"0"
+                csr.vs.status.sie := csr.s.status.spie
+                csr.vs.status.spie := True
               }
             }
             goto(RUNNING)
