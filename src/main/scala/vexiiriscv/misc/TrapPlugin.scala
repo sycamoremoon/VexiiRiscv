@@ -669,7 +669,7 @@ class TrapPlugin(val trapAt : Int) extends FiberPlugin with TrapService {
                 csr.m.status.mie := False
                 csr.m.status.mpie := csr.m.status.mie
                 if (priv.p.withUser) csr.m.status.mpp := csr.privilege(1 downto 0).asUInt
-                if (priv.p.withHypervisor) csr.m.status.mpv := csr.privilege(2)
+                if (priv.p.withHypervisor) csr.m.status.mpv := PrivilegeMode.isGuest(csr.privilege)
 
                 csr.m.cause.code := buffer.trap.code
                 csr.m.cause.interrupt := buffer.trap.interrupt
@@ -678,7 +678,7 @@ class TrapPlugin(val trapAt : Int) extends FiberPlugin with TrapService {
                 csr.s.status.sie := False
                 csr.s.status.spie := csr.s.status.sie
                 if (priv.p.withUser) csr.s.status.spp := csr.privilege(0, 1 bits).asUInt
-                if (priv.p.withHypervisor) csr.h.status.spv := csr.privilege(2)
+                if (priv.p.withHypervisor) csr.h.status.spv := PrivilegeMode.isGuest(csr.privilege)
 
                 csr.s.cause.code := buffer.trap.code
                 csr.s.cause.interrupt := buffer.trap.interrupt

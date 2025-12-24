@@ -80,8 +80,8 @@ class EnvPlugin(layer : LaneLayer,
           trapPort.code := CSR.MCAUSE_ENUM.BREAKPOINT
         }
         is(EnvPluginOp.ECALL) {
-          trapPort.code := privilege(2).mux(
-            B((privilege << 1).resize(Global.CODE_WIDTH)),
+          trapPort.code := PrivilegeMode.isGuest(privilege).mux(
+            B((privilege.asBits << 1).resize(Global.CODE_WIDTH)),
             B(privilege.resize(Global.CODE_WIDTH) | CSR.MCAUSE_ENUM.ECALL_USER)
           )
         }

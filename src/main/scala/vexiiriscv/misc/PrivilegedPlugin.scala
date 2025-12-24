@@ -1087,8 +1087,8 @@ class PrivilegedPlugin(val p : PrivilegedParam, val hartIds : Seq[Int]) extends 
       }
 
       def HostCsrFilter(id: Int): Any = p.withHypervisor.mux(HostCsrFilter(id, True), id)
-      def HostCsrFilter(id: Int, cond: Bool): CsrCondFilter = CsrCondFilter(id, privilege >= 0 && cond)
-      def GuestCsrFilter(id: Int, cond: Bool = True) = CsrCondFilter(id, privilege < 0 && cond)
+      def HostCsrFilter(id: Int, cond: Bool): CsrCondFilter = CsrCondFilter(id, !PrivilegeMode.isGuest(privilege) && cond)
+      def GuestCsrFilter(id: Int, cond: Bool = True) = CsrCondFilter(id, PrivilegeMode.isGuest(privilege) && cond)
     }
 
     val defaultTrap = new Area {
