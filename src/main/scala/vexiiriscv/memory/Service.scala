@@ -102,6 +102,7 @@ trait AddressTranslationService extends Area {
 
 case class AddressTranslationReq(
   PRE_ADDRESS: Payload[UInt],
+  FROM_GUEST: Payload[Bool],
   FORCE_PHYSICAL: Payload[Bool]
 )
 
