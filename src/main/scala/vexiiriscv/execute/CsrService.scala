@@ -160,17 +160,17 @@ trait CsrService {
     reads += CsrOnReadData(bitOffset, converted)
   }
 
-  def write[T <: Data](value : T, csrId : Int, bitOffset : Int = 0) : T = {
-    onWrite(csrId, true){ value.assignFromBits(bus.write.bits(bitOffset, widthOf(value) bits)) }
+  def write[T <: Data](value : T, csrFilter : Any, bitOffset : Int = 0) : T = {
+    onWrite(csrFilter, true){ value.assignFromBits(bus.write.bits(bitOffset, widthOf(value) bits)) }
     value
   }
-  def writeWhen[T <: Data](value : T, cond : Bool, csrId : Int, bitOffset : Int = 0) : T = {
-    onWrite(csrId, true){ when(cond) { value.assignFromBits(bus.write.bits(bitOffset, widthOf(value) bits)) }}
+  def writeWhen[T <: Data](value : T, cond : Bool, csrFilter : Any, bitOffset : Int = 0) : T = {
+    onWrite(csrFilter, true){ when(cond) { value.assignFromBits(bus.write.bits(bitOffset, widthOf(value) bits)) }}
     value
   }
-  def readWrite[T <: Data](value : T, csrId : Int, bitOffset : Int = 0) : T = {
-    read(value, csrId, bitOffset)
-    write(value, csrId, bitOffset)
+  def readWrite[T <: Data](value : T, csrFilter : Any, bitOffset : Int = 0) : T = {
+    read(value, csrFilter, bitOffset)
+    write(value, csrFilter, bitOffset)
     value
   }
 
@@ -180,9 +180,9 @@ trait CsrService {
     }
   }
 
-  def readWrite(csrAddress : Int, thats : (Int, Data)*) : Unit = for(that <- thats) readWrite(that._2, csrAddress, that._1)
-  def write(csrAddress : Int, thats : (Int, Data)*) : Unit = for(that <- thats) write(that._2, csrAddress, that._1)
-  def read(csrAddress : Int, thats : (Int, Data)*) : Unit = for(that <- thats) read(that._2, csrAddress, that._1)
+  def readWrite(csrFilter : Any, thats : (Int, Data)*) : Unit = for(that <- thats) readWrite(that._2, csrFilter, that._1)
+  def write(csrFilter : Any, thats : (Int, Data)*) : Unit = for(that <- thats) write(that._2, csrFilter, that._1)
+  def read(csrFilter : Any, thats : (Int, Data)*) : Unit = for(that <- thats) read(that._2, csrFilter, that._1)
 
 
   //Warning currently do not apply on ram writes
