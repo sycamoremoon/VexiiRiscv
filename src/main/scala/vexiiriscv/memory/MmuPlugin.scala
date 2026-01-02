@@ -170,6 +170,7 @@ class MmuPlugin(var spec : MmuSpec,
 
     val csrLock = retains(csr.csrLock, ram.csrLock)
     val accessLock = retains(dbs.accessRetainer)
+    val storeLock = retains(dbs.storeRetainer)
     val buildBefore = retains(List(host[PipelineBuilderPlugin].elaborationLock) ++ pcs.map(_.elaborationLock))
 
 
@@ -183,8 +184,10 @@ class MmuPlugin(var spec : MmuSpec,
     assert(VIRTUAL_WIDTH.get == XLEN.get || XLEN.get > VIRTUAL_WIDTH.get && VIRTUAL_WIDTH.get > physicalWidth)
 
     val accessBus = dbs.newDBusAccess()
+    val storeBus = dbs.newDBusStore()
 
     accessLock.release()
+    storeLock.release()
 
     def physCap(range : Range) = (range.high min physicalWidth-1) downto range.low
 
@@ -437,7 +440,11 @@ class MmuPlugin(var spec : MmuSpec,
       }
 
       val update = new Area {
-        def cmd = accessBus.cmd
+        def cmd = storeBus.cmd
+        cmd.valid             := False
+        cmd.size              := U(log2Up(spec.entryBytes))
+        cmd.data.assignDontCare()
+        cmd.address.assignDontCare()
       }
 
       for (port <- refillPorts; rsp = port.rsp) {
@@ -564,8 +571,8 @@ class MmuPlugin(var spec : MmuSpec,
 
         UPDATE(levelId) whenIsActive {  
           when(mmuArg === 1) {
-            update.cmd.write := True
             update.cmd.valid := True
+            update.cmd.address := load.cmd.address
             update.cmd.data := load.rsp.data
             update.cmd.data(6).set // PTE_A bit
             update.cmd.data(7).set // PTE_D bit
