@@ -26,7 +26,7 @@ import vexiiriscv.execute.lsu.LsuL1.{HAZARD}
 import scala.collection.mutable.ArrayBuffer
 
 object LsuL1CmdOpcode extends SpinalEnum{
-  val LSU, ACCESS, STORE_BUFFER, FLUSH, PREFETCH = newElement()
+  val LSU, ACCESS, STORE_BUFFER, DBUS_STORE, FLUSH, PREFETCH = newElement()
 }
 
 case class LsuL1Cmd() extends Bundle {
@@ -278,6 +278,7 @@ class LsuPlugin(var layer : LaneLayer,
     accessRetainer.await()
     val l1 = LsuL1
     val FROM_ACCESS = Payload(Bool())
+    val FROM_STORE = Payload(Bool())
     val FROM_LSU = Payload(Bool())
     val FROM_WB = Payload(Bool())
     val FORCE_PHYSICAL = Payload(Bool())
@@ -428,7 +429,7 @@ class LsuPlugin(var layer : LaneLayer,
 
     // Collect the different request and interface them with the L1 cache as well as the MMU
     val onAddress0 = new elp.Execute(addressAt){
-      FORCE_PHYSICAL := FROM_ACCESS || FROM_WB
+      FORCE_PHYSICAL := FROM_ACCESS || FROM_STORE || FROM_WB
       val LOAD_MMU = insert(LOAD || CLEAN || INVALIDATE)
       val request = AddressTranslationReq(
         PRE_ADDRESS    = l1.MIXED_ADDRESS,
@@ -451,7 +452,7 @@ class LsuPlugin(var layer : LaneLayer,
       }
 
       val ports = ArrayBuffer[Stream[LsuL1Cmd]]()
-
+      val storeId = Reg(Decode.STORE_ID) init (0)
       // Accesses coming explicitly from the software
       val ls = new Area {
         val prefetchOp = Decode.UOP(24 downto 20)
@@ -468,9 +469,6 @@ class LsuPlugin(var layer : LaneLayer,
         port.guest := GUEST
         port.op := LsuL1CmdOpcode.LSU
         if(softwarePrefetch) when(LSU_PREFETCH) { port.op := LsuL1CmdOpcode.PREFETCH }
-
-        val storeId = Reg(Decode.STORE_ID) init (0)
-        storeId := storeId + U(port.fire)
         port.storeId := storeId
       }
 
@@ -496,6 +494,29 @@ class LsuPlugin(var layer : LaneLayer,
 
         host[DispatchPlugin].haltDispatchWhen(sbWaiter)
       }
+
+      val store = dbusStores.nonEmpty generate new Area {
+        assert(dbusStores.size == 1)
+        val waiter = new L1Waiter
+        val sbWaiter = withStoreBuffer.mux(RegInit(False) clearWhen(storeBuffer.empty), False)
+        val cmd = dbusStores.head.cmd
+        val DBUS_STORE_DATA = insert(cmd.data)
+        val port = ports.addRet(Stream(LsuL1Cmd()))
+        port.arbitrationFrom(cmd.haltWhen(waiter.valid || sbWaiter))
+        port.address := cmd.address.resized
+        port.size := cmd.size
+        port.load := False
+        port.store := True
+        port.execute := False
+        port.atomic := True
+        port.clean := False
+        port.invalidate := False
+        port.guest := False
+        port.op := LsuL1CmdOpcode.DBUS_STORE
+        port.storeId := storeId
+        host[DispatchPlugin].haltDispatchWhen(sbWaiter)
+      }
+      storeId := storeId + U(ls.port.fire)
 
       // Accesses comming from the TrapPlugin (ex : fence.i)
       val flush = (flusher != null) generate new Area {
@@ -574,6 +595,7 @@ class LsuPlugin(var layer : LaneLayer,
       l1.FLUSH := arbiter.io.output.op === LsuL1CmdOpcode.FLUSH
       Decode.STORE_ID := arbiter.io.output.storeId
       FROM_ACCESS := arbiter.io.output.op === LsuL1CmdOpcode.ACCESS
+      FROM_STORE := arbiter.io.output.op === LsuL1CmdOpcode.DBUS_STORE
       FROM_WB := arbiter.io.output.op === LsuL1CmdOpcode.STORE_BUFFER
       FROM_LSU := arbiter.io.output.op === LsuL1CmdOpcode.LSU
       FROM_PREFETCH := arbiter.io.output.op === LsuL1CmdOpcode.PREFETCH
@@ -735,6 +757,10 @@ class LsuPlugin(var layer : LaneLayer,
           size -> writeData(0, w bits).#*(Riscv.LSLEN / w)
         }
         l1.WRITE_DATA := l1.SIZE.muxListDc(mapping)
+        if (dbusStores.nonEmpty)
+          when(FROM_STORE) {
+            l1.WRITE_DATA := onAddress0.store.DBUS_STORE_DATA
+          }
       }
 
       val SC_MISS = insert(scMiss) //insert(withRva.mux(io.doIt.mux[Bool](io.rsp.scMiss, scMiss), False))
@@ -1051,7 +1077,7 @@ class LsuPlugin(var layer : LaneLayer,
       skipsWrite += preCtrl.MISS_ALIGNED
       skipsWrite += FROM_LSU && (onTrigger.HIT || pmpPort.ACCESS_FAULT)
       skipsWrite += FROM_PREFETCH
-      if(Riscv.RVA) skipsWrite += l1.ATOMIC && !(l1.LOAD || l1.EXECUTE) && scMiss
+      if(Riscv.RVA) skipsWrite += l1.ATOMIC && !(l1.LOAD || l1.EXECUTE) && scMiss && !FROM_STORE
       if (withStoreBuffer) skipsWrite += wb.selfHazard || !FROM_WB && wb.hit
 
       l1.ABORD := abords.orR
@@ -1096,6 +1122,25 @@ class LsuPlugin(var layer : LaneLayer,
         }
         when(rsp.fire && rsp.redo) {
           onAddress0.access.waiter.capture(down)
+        }
+      }
+
+      val store = dbusStores.nonEmpty generate new Area {
+        assert(dbusStores.size == 1)
+        val rsp = dbusStores.head.rsp
+        rsp.valid    := l1.SEL && FROM_STORE && !elp.isFreezed()
+        rsp.error    := l1.FAULT || pmpPort.ACCESS_FAULT
+        rsp.redo     := traps.l1Failed
+        if(withStoreBuffer) when(wb.hit){
+          rsp.redo := True
+          onAddress0.store.sbWaiter setWhen(rsp.valid)
+        }
+        when(traps.pmaFault){
+          rsp.error := True
+          rsp.redo := False
+        }
+        when(rsp.fire && rsp.redo) {
+          onAddress0.store.waiter.capture(down)
         }
       }
 
