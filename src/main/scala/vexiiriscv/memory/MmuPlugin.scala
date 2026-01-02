@@ -164,12 +164,12 @@ class MmuPlugin(var spec : MmuSpec,
   val logic = during setup new Area{
     val priv = host[PrivilegedPlugin]
     val csr = host[CsrAccessPlugin]
-    val access = host[DBusAccessService]
+    val dbs = host[DBusService]
     val ram = host[CsrRamService]
     val pcs = host.get[PerformanceCounterService]
 
     val csrLock = retains(csr.csrLock, ram.csrLock)
-    val accessLock = retains(access.accessRetainer)
+    val accessLock = retains(dbs.accessRetainer)
     val buildBefore = retains(List(host[PipelineBuilderPlugin].elaborationLock) ++ pcs.map(_.elaborationLock))
 
 
@@ -182,7 +182,7 @@ class MmuPlugin(var spec : MmuSpec,
     TVAL_WIDTH.set(MIXED_WIDTH)
     assert(VIRTUAL_WIDTH.get == XLEN.get || XLEN.get > VIRTUAL_WIDTH.get && VIRTUAL_WIDTH.get > physicalWidth)
 
-    val accessBus = access.newDBusAccess()
+    val accessBus = dbs.newDBusAccess()
 
     accessLock.release()
 
@@ -360,13 +360,13 @@ class MmuPlugin(var spec : MmuSpec,
       val busy = !isActive(IDLE)
       val virtual = Reg(UInt(MIXED_WIDTH bits))
 
-      val cacheRefill = Reg(Bits(access.accessRefillCount bits)) init(0)
+      val cacheRefill = Reg(Bits(dbs.accessRefillCount bits)) init(0)
       val cacheRefillAny = Reg(Bool()) init(False)
 
       val cacheRefillSet = cacheRefill.getZero
       val cacheRefillAnySet = False
-      cacheRefill    := (cacheRefill | cacheRefillSet) & ~access.accessWake
-      cacheRefillAny := (cacheRefillAny | cacheRefillAnySet) & !access.accessWake.orR
+      cacheRefill    := (cacheRefill | cacheRefillSet) & ~dbs.accessWake
+      cacheRefillAny := (cacheRefillAny | cacheRefillAnySet) & !dbs.accessWake.orR
 
       setEntry(IDLE)
 

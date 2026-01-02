@@ -10,7 +10,7 @@ import spinal.core.fiber.{Handle, Retainer}
 import spinal.core.sim.SimDataPimper
 import vexiiriscv.decode.Decode
 import vexiiriscv.fetch.FetchPipelinePlugin
-import vexiiriscv.memory.{AddressTranslationPortUsage, AddressTranslationService, DBusAccessService, PmaLoad, PmaLogic, PmaPort, PmaStore, PmpService}
+import vexiiriscv.memory.{AddressTranslationPortUsage, AddressTranslationService, DBusService, PmaLoad, PmaLogic, PmaPort, PmaStore, PmpService}
 import vexiiriscv.misc.{AddressToMask, LsuTriggerService, PerformanceCounterService, TrapArg, TrapReason, TrapService}
 import vexiiriscv.riscv.Riscv.{FLEN, LSLEN, XLEN}
 import spinal.lib.misc.pipeline._
@@ -52,7 +52,7 @@ class LsuCachelessPlugin(var layer : LaneLayer,
                          var pmaAt : Int = 0,
                          var forkAt: Int = 0,
                          var joinAt: Int = 1,
-                         var wbAt: Int = 2) extends FiberPlugin with DBusAccessService with LsuCachelessBusProvider {
+                         var wbAt: Int = 2) extends FiberPlugin with DBusService with LsuCachelessBusProvider {
 
   val WITH_RSP, WITH_ACCESS, FENCE = Payload(Bool())
   override def accessRefillCount: Int = 0

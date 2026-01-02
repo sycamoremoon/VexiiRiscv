@@ -14,7 +14,7 @@ import spinal.lib.bus.tilelink.DebugId
 import spinal.lib.bus.wishbone.WishboneConfig
 import vexiiriscv.decode.Decode
 import vexiiriscv.fetch.FetchPipelinePlugin
-import vexiiriscv.memory.{AddressTranslationPortUsage, AddressTranslationService, DBusAccessService}
+import vexiiriscv.memory.{AddressTranslationPortUsage, AddressTranslationService, DBusService}
 import vexiiriscv.misc.{AddressToMask, TrapArg, TrapReason, TrapService}
 import vexiiriscv.riscv.Riscv.{LSLEN, XLEN}
 import spinal.lib.misc.pipeline._

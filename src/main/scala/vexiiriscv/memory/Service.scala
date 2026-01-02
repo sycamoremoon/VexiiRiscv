@@ -137,29 +137,48 @@ class PmpRsp extends Area{
 
 
 
-trait DBusAccessService{
+trait DBusService{
   def accessRefillCount : Int
   def accessWake: Bits
   def newDBusAccess() : DBusAccess = dbusAccesses.addRet(new DBusAccess(accessRefillCount))
   val dbusAccesses = ArrayBuffer[DBusAccess]()
   val accessRetainer = Retainer()
+  def newDBusStore() : DBusStore = dbusStores.addRet(new DBusStore())
+  val dbusStores = ArrayBuffer[DBusStore]()
+  val storeRetainer = Retainer()
 }
 
-case class DBusAccess(refillCount : Int) extends Bundle {
+class DBusOperate() extends Bundle
+case class DBusAccess(refillCount : Int) extends DBusOperate {
   val cmd = Stream(DBusAccessCmd())
   val rsp = Flow(DBusAccessRsp(refillCount))
 }
+case class DBusStore() extends DBusOperate {
+  val cmd = Stream(DBusStoreCmd())
+  val rsp = Flow(DBusStoreRsp())
+}
 
-case class DBusAccessCmd() extends Bundle {
+class DBusCmd() extends Bundle
+case class DBusAccessCmd() extends DBusCmd {
   val address = Global.PHYSICAL_ADDRESS()
   val size = UInt(2 bits)
 }
+case class DBusStoreCmd() extends DBusCmd {
+  val address = Global.PHYSICAL_ADDRESS()
+  val data = Bits(Riscv.LSLEN bits)
+  val size = UInt(2 bits)
+}
 
-case class DBusAccessRsp(refillCount : Int) extends Bundle {
+class DBusRsp() extends Bundle
+case class DBusAccessRsp(refillCount : Int) extends DBusRsp {
   val data = Bits(Riscv.XLEN bits)
   val error = Bool()
   val redo = Bool()
   val waitSlot = Bits(refillCount bits)
   val waitAny  = Bool()
 }
-
+case class DBusStoreRsp() extends DBusRsp {
+  val data = Bits(Riscv.XLEN bits)
+  val error = Bool()
+  val redo = Bool()
+}
