@@ -15,7 +15,7 @@ import vexiiriscv.execute.cfu.{CfuBusParameter, CfuPlugin, CfuPluginEncoding}
 import vexiiriscv.execute.fpu.{FpuAddSharedParam, FpuMulParam}
 import vexiiriscv.execute.lsu._
 import vexiiriscv.fetch.{FetchCachelessAxi4Plugin, FetchCachelessPlugin, FetchCachelessWishbonePlugin, FetchL1Axi4Plugin, FetchL1Plugin, FetchL1WishbonePlugin, PrefetcherNextLinePlugin}
-import vexiiriscv.memory.{MmuPortParameter, MmuSpec, MmuStorageLevel, MmuStorageParameter, PmpParam, PmpPlugin, PmpPortParameter, ShadowMmuPlugin, TranslatedDBusAccessPlugin}
+import vexiiriscv.memory.{MmuPortParameter, MmuSpec, MmuStorageLevel, MmuStorageParameter, PmpParam, PmpPlugin, PmpPortParameter, ShadowMmuPlugin, TranslatedDBusAccessPlugin, SvaduPlugin}
 import vexiiriscv.misc._
 import vexiiriscv.prediction.{LearnCmd, LearnPlugin}
 import vexiiriscv.riscv.{FloatRegFile, IntRegFile}
@@ -106,6 +106,7 @@ class ParamSimple() {
   var withDispatcherBuffer = false
   var hartCount = 1
   var disableMmu = false
+  var withSvadu = true
   var asidWidth = 0
   var physicalWidth = 32
   var resetVector = 0x80000000l
@@ -721,6 +722,7 @@ class ParamSimple() {
     opt[Unit]("with-hypervisor") action { (v, c) => addISA("h", "s", "u") }
     opt[Unit]("with-supervisor") action { (v, c) => addISA("s", "u") }
     opt[Unit]("with-user") action { (v, c) => addISA("u") }
+    opt[Unit]("with-svadu") action { (v, c) => withSvadu = true }
     opt[Unit]("without-mmu") action { (v, c) => disableMmu = false }
     opt[Unit]("without-mul") action { (v, c) => removeISA("m", "zmmul") }
     opt[Unit]("without-div") action { (v, c) => if(checkISA("m")) {removeISA("m"); addISA("zmmul")} }
@@ -864,6 +866,7 @@ class ParamSimple() {
       )
     }
 
+    if(withSvadu) plugins += new SvaduPlugin
     plugins += new PmpPlugin(pmpParam)
 
     plugins += new vexiiriscv.misc.PipelineBuilderPlugin()

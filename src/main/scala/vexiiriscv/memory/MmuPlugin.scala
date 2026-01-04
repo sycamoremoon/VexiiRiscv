@@ -228,6 +228,7 @@ class MmuPlugin(var spec : MmuSpec,
     val access = host[TranslatedDBusAccessService]
     val ram = host[CsrRamService]
     val pcs = host.get[PerformanceCounterService]
+    val svadu = host.get[SvaduPlugin]
 
     val csrLock = retains(csr.csrLock, ram.csrLock)
     val accessLock = retains(access.accessRetainer)
@@ -417,7 +418,7 @@ class MmuPlugin(var spec : MmuSpec,
     // Implement the TLB storage refill FSM
     val refill = new StateMachine{
       val IDLE = new State
-      val CMD, RSP, REFILL, DONE = List.fill(spec.levels.size)(new State)
+      val CMD, RSP, UPDATE, REFILL, DONE = List.fill(spec.levels.size)(new State)
 
       val busy = !isActive(IDLE)
       val virtual = Reg(UInt(MIXED_WIDTH bits))
@@ -489,8 +490,8 @@ class MmuPlugin(var spec : MmuSpec,
         val reservedFault = (readed & spec.pteReserved).orR
         val exception = !flags.V || (!flags.R && flags.W) || rsp.error.orR ||
                         (!leaf && (flags.D | flags.A | flags.U)) ||
-                        (leaf && !flags.A) ||
                         reservedFault
+        val svade_exception = (leaf && !flags.A) || (leaf && permission.write && !flags.D)
         val levelToPhysicalAddress = List.fill(spec.levels.size)(UInt(spec.physicalWidth bits))
         val levelException = List.fill(spec.levels.size)(False)
         val nextLevelBase = U(0, PHYSICAL_WIDTH bits)
@@ -542,7 +543,7 @@ class MmuPlugin(var spec : MmuSpec,
     }
 
       val fetch = for((level, levelId) <- spec.levels.zipWithIndex) yield new Area{
-        val pteFault = (load.exception || load.levelException(levelId)) || (levelId == 0).mux(!load.leaf, False)
+        val pteFault = (load.exception || load.levelException(levelId)) || (levelId == 0).mux(!load.leaf, False) || svadu.isEmpty.mux(load.svade_exception, False)
         val pteReadError = load.rsp.error(0)
         val shadowReadError = load.rsp.error(1)
         val leafAccessFault = load.levelToPhysicalAddress(levelId).drop(physicalWidth) =/= 0 //levelToPhysicalAddress is used to emit fault when the final translated address it outside the range of the physical addresses
@@ -600,6 +601,9 @@ class MmuPlugin(var spec : MmuSpec,
                 case 0 => {
                   when(!storageEnable || translationFault) {
                     goto(DONE(levelId))
+                  } elsewhen(load.svade_exception) {
+                    if(svadu.isEmpty) goto(DONE(levelId))
+                    else goto(UPDATE(levelId))
                   } otherwise {
                     goto(REFILL(levelId))
                   }
@@ -627,6 +631,18 @@ class MmuPlugin(var spec : MmuSpec,
           }
         }
 
+        if(svadu.nonEmpty) {
+          UPDATE(levelId) whenIsActive {
+            svadu.get.logic.cmd.valid := True
+            svadu.get.logic.cmd.data := load.rsp.data
+            svadu.get.logic.cmd.address := load.cmd.address
+            svadu.get.logic.cmd.permission := permission
+            when(svadu.get.logic.cmd.ready === True) {
+              goto(REFILL(levelId))
+            }
+          }
+        }
+
         REFILL(levelId) whenIsActive {
           for((storage, sid) <- storages.zipWithIndex){
             val storageLevelId = storage.self.p.levels.filter(_.id <= levelId).map(_.id).max
@@ -643,8 +659,8 @@ class MmuPlugin(var spec : MmuSpec,
             storageLevel.write.data.allowWrite      := load.flags.W
             storageLevel.write.data.allowExecute    := load.flags.X
             storageLevel.write.data.allowUser       := load.flags.U
-            storageLevel.write.data.dirty           := load.flags.D
-            storageLevel.write.data.accessed        := load.flags.A
+            storageLevel.write.data.dirty           := svadu.isEmpty.mux(load.flags.D, permission.write.mux(True, load.flags.D))
+            storageLevel.write.data.accessed        := svadu.isEmpty.mux(load.flags.A, True)
             storageLevel.write.data.guest           := isTwoStage
 
             storageLevel.allocId.increment()
