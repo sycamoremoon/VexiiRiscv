@@ -435,9 +435,11 @@ class MmuPlugin(var spec : MmuSpec,
           storageEnable := arbiter.io.output.storageEnable
           virtual := arbiter.io.output.address
           // TODO: check guest request
-          load.address := (satp.ppn @@ spec.levels.last.vpn(arbiter.io.output.address) @@ U(0, log2Up(spec.entryBytes) bits)).resized
+          when(!GPN2HPN.cmd.valid) {
+            load.address := (satp.ppn @@ spec.levels.last.vpn(arbiter.io.output.address) @@ U(0, log2Up(spec.entryBytes) bits)).resized
+          }
           arbiter.io.output.ready := True
-          guestTran := isGuest
+          guestTran := arbiter.io.output.guest
           goto(LOAD(spec.levels.size - 1))
         }
       }
@@ -539,7 +541,28 @@ class MmuPlugin(var spec : MmuSpec,
         }
         
         LOAD(levelId) whenIsActive{
-          goto(CMD(levelId))
+          when(guestTran) {
+            if(levelId == 2) GPN2HPN.cmd.GPA := satp.ppn(0, 27 bits) @@ U(0, 12 bits)
+            else {
+              GPN2HPN.cmd.GPA := load.rsp.data(10, 27 bits).asUInt @@ U(0, 12 bits)
+              when(GPN2HPN.cmd.ready) {
+                load.rsp.ready := True
+              }
+            }
+            GPN2HPN.cmd.valid := True
+            when(GPN2HPN.rsp.valid) {
+              when (GPN2HPN.rsp.err) {
+                // TODO: check error
+                goto(DONE(levelId))
+              } otherwise {
+                GPN2HPN.rsp.ready := True
+                load.address := (GPN2HPN.rsp.HPN @@ spec.levels(levelId).vpn(arbiter.io.output.address) @@ U(0, 3 bits)).resized
+                goto(CMD(levelId))
+              }
+            }
+          } otherwise {
+            goto(CMD(levelId))
+          }
         }
 
         CMD(levelId) whenIsActive{
@@ -552,6 +575,111 @@ class MmuPlugin(var spec : MmuSpec,
         }
 
         RSP(levelId) whenIsActive{
+          if(levelId == 0) load.exception setWhen(!load.leaf)
+          when(load.rsp.valid){
+            when(load.rsp.redo){
+              load.rsp.ready := True
+              goto(LOAD(levelId))
+            } otherwise {
+              levelId match {
+                case 0 => goto(DONE(levelId))
+                case _ => {
+                  when(load.leaf || load.exception) {
+                    goto(DONE(levelId))
+                  } otherwise {
+                    val targetLevelId = levelId - 1
+                    val targetLevel = spec.levels(targetLevelId)
+                    load.address := pte.nextLevelBase
+                    load.address(log2Up(spec.entryBytes), targetLevel.physicalWidth bits) := targetLevel.vpn(virtual)
+                    when(guestTran) {
+                      goto(LOAD(targetLevelId))
+                    } otherwise {
+                      load.rsp.ready := True
+                      goto(CMD(targetLevelId))
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        DONE(levelId) whenIsActive{
+          when(guestTran && !GPN2HPN.rsp.valid) {
+            GPN2HPN.cmd.GPA := load.rsp.data(10, 27 bits).asUInt @@ U(0, 12 bits)
+            GPN2HPN.cmd.valid := True
+            when(GPN2HPN.cmd.ready) {
+              load.rsp.ready := True
+            }
+          } elsewhen (guestTran && GPN2HPN.rsp.valid) {
+            GPN2HPN.rsp.ready := True
+            load.rsp.ready := True
+            doneLogic
+          } otherwise {
+            // Non-hypervisor
+            load.rsp.ready := True
+            doneLogic
+          }
+        }
+      }
+    }
+
+
+
+    val GPN2HPN = new StateMachine{
+      val IDLE = new State
+      val CMD, RSP, DONE = List.fill(spec.levels.size)(new State)
+      setEntry(IDLE)
+    
+      case class GPN2HPNRsp() extends Bundle {
+        def HPN = HPTE(54 downto 10)
+        val HPTE = UInt(XLEN bits)
+        val err = Bool()
+      }
+
+      case class GPN2HPNCmd() extends Bundle {
+        def GPN = GPA(VIRTUAL_WIDTH - 1 downto 12)
+        val GPA = UInt(VIRTUAL_WIDTH bits)
+      }
+
+      val cmd = Stream(GPN2HPNCmd())
+      val rsp = Stream(GPN2HPNRsp())
+      val virtual = Reg(UInt(MIXED_WIDTH bits))
+      val pte = load.levelPhysicalAddress(virtual)
+
+      cmd.GPA.assignDontCare()
+      cmd.valid := False
+      cmd.ready := False
+      rsp.HPTE.assignDontCare()
+      rsp.err   := False
+      rsp.valid := False
+      rsp.ready := False
+
+      IDLE whenIsActive {
+        when(cmd.valid && hgatp.mode === spec.satpMode) {
+          cmd.ready := True
+          virtual := cmd.GPA
+          load.address := (hgatp.ppn @@ spec.levels.last.vpn(cmd.GPA) @@ U(0, log2Up(spec.entryBytes) bits)).resized
+          goto(CMD(spec.levels.size - 1))
+        }
+      }
+
+      val fetch = for((level, levelId) <- spec.levels.zipWithIndex) yield new Area{
+        val pteFault = (load.exception || pte.levelException(levelId) || !load.flags.A)
+        val pteReadError = load.rsp.error
+        val leafAccessFault = pte.levelToPhysicalAddress(levelId).drop(physicalWidth) =/= 0
+        val pageFault = !pteReadError && pteFault
+        val accessFault = pteReadError || !pteFault && leafAccessFault
+        val guestFault = pageFault || pteFault
+
+        CMD(levelId) whenIsActive {
+          load.cmd.valid := True
+          when(load.cmd.ready) {
+            goto(RSP(levelId))
+          }
+        }
+
+        RSP(levelId) whenIsActive {
           if(levelId == 0) load.exception setWhen(!load.leaf)
           when(load.rsp.valid){
             when(load.rsp.redo){
@@ -577,9 +705,12 @@ class MmuPlugin(var spec : MmuSpec,
           }
         }
 
-        DONE(levelId) whenIsActive{
+        DONE(levelId) whenIsActive {
           load.rsp.ready := True
-          doneLogic
+          rsp.HPTE := load.rsp.data.asUInt
+          rsp.err := guestFault
+          rsp.valid := True
+          goto(IDLE)
         }
       }
     }
