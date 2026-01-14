@@ -210,11 +210,26 @@ class MmuPlugin(var spec : MmuSpec,
       val sum  = RegInit(False)
     }
 
+    val hgatp = new Area {
+      val (modeOffset, modeWidth, ppnWidth, vmidOffset, vmidWidthMax) = XLEN.get match {
+        case 32 => (31, 1, 20, 22, 9) //20 instead of 22 to avoid 34 physical bits
+        case 64 => (60, 4, 44, 44, 16)
+      }
+      assert(asidWidth <= vmidWidthMax, "vmidWidth is too big")
+      val mode = Reg(Bits(modeWidth bits)) init(0)
+      val vmid = Reg(Bits(asidWidth bits)) init(0)
+      val ppn =  Reg(UInt(ppnWidth bits))  init(0)
+    }
+
     for(offset <- List(CSR.MSTATUS, CSR.SSTATUS)) csr.readWrite(offset, 19 -> status.mxr, 18 -> status.sum)
 
     csr.readWrite(CSR.SATP, satp.modeOffset -> satp.mode, satp.asidOffset -> satp.asid, 0 -> satp.ppn)
     val satpModeWrite = csr.bus.write.bits(satp.modeOffset, satp.modeWidth bits)
     csr.writeCancel(CSR.SATP, satpModeWrite =/= 0 && satpModeWrite =/= spec.satpMode)
+
+    csr.readWrite(CSR.HGATP, hgatp.modeOffset -> hgatp.mode, hgatp.vmidOffset -> hgatp.vmid, 0 -> hgatp.ppn)
+    val hgatpModeWrite = csr.bus.write.bits(hgatp.modeOffset, hgatp.modeWidth bits)
+    csr.writeCancel(CSR.HGATP, hgatpModeWrite =/= 0 && hgatpModeWrite =/= spec.satpMode)
 
     csr.onDecode(CSR.SATP) {
       when(priv.logic.harts(0).m.status.tvm && priv.getPrivilege(0) === 1) {
@@ -265,6 +280,7 @@ class MmuPlugin(var spec : MmuSpec,
     val isMachine = priv.getPrivilege(0) === PrivilegeMode.M
     val isSupervisor = priv.getPrivilege(0) === PrivilegeMode.S
     val isUser = priv.getPrivilege(0) === PrivilegeMode.U
+    val isGuest = priv.getPrivilege(0) < 0
     def mprv = priv.logic.harts(0).m.status.mprv
 
     api.fetchTranslationEnable := satp.mode === spec.satpMode
@@ -398,10 +414,11 @@ class MmuPlugin(var spec : MmuSpec,
     // Implement the TLB storage refill FSM
     val refill = new StateMachine{
       val IDLE = new State
-      val CMD, RSP, DONE = List.fill(spec.levels.size)(new State)
+      val LOAD, CMD, RSP, DONE = List.fill(spec.levels.size)(new State)
 
       val busy = !isActive(IDLE)
       val virtual = Reg(UInt(MIXED_WIDTH bits))
+      val guestTran = RegInit(False)
 
       setEntry(IDLE)
 
@@ -417,9 +434,11 @@ class MmuPlugin(var spec : MmuSpec,
           storageOhReg := UIntToOh(arbiter.io.output.storageId)
           storageEnable := arbiter.io.output.storageEnable
           virtual := arbiter.io.output.address
+          // TODO: check guest request
           load.address := (satp.ppn @@ spec.levels.last.vpn(arbiter.io.output.address) @@ U(0, log2Up(spec.entryBytes) bits)).resized
           arbiter.io.output.ready := True
-          goto(CMD(spec.levels.size - 1))
+          guestTran := isGuest
+          goto(LOAD(spec.levels.size - 1))
         }
       }
 
@@ -517,6 +536,10 @@ class MmuPlugin(var spec : MmuSpec,
           }
 
           goto(IDLE)
+        }
+        
+        LOAD(levelId) whenIsActive{
+          goto(CMD(levelId))
         }
 
         CMD(levelId) whenIsActive{
