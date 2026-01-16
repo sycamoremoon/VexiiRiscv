@@ -436,6 +436,7 @@ class MmuPlugin(var spec : MmuSpec,
         rsp.valid := False
         rsp.pageFault.assignDontCare()
         rsp.accessFault.assignDontCare()
+        rsp.guestFault.assignDontCare()
         rsp.pf.assignDontCare()
         rsp.ae_ptw.assignDontCare()
         rsp.ae_final.assignDontCare()
@@ -485,6 +486,7 @@ class MmuPlugin(var spec : MmuSpec,
           refillPorts.map(_.rsp).foreach { o =>
             o.pageFault := pageFault
             o.accessFault := accessFault
+            o.guestFault := False
             o.pf  := pageFault
             o.ae_ptw    := accessFault && !load.leaf
             o.ae_final  := accessFault && load.leaf //Note so sure
