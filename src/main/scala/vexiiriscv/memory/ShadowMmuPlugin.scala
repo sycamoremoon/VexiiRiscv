@@ -135,6 +135,9 @@ class ShadowMmuPlugin(var spec : MmuSpec,
         val lineAllowRead    = entriesMux(_.allowRead)
         val lineAllowWrite   = entriesMux(_.allowWrite)
         val lineTranslated   = entriesMux(_.physicalAddressFrom(ps.req.PRE_ADDRESS))
+        val lineDirty        = entriesMux(_.dirty)
+        val lineAccessed     = entriesMux(_.accessed)
+        val refill_svadu      = (!lineDirty && ps.req.STORE)
 
         val requireMmuLockup  = CombInit(ps.usage match {
           case LOAD_STORE => api.lsuTranslationEnable || (ps.req.FORCE_GUEST && hgatp.mode === spec.satpMode)
@@ -150,7 +153,7 @@ class ShadowMmuPlugin(var spec : MmuSpec,
           val allow_write   = lineAllowWrite
 
           HAZARD        := False
-          REFILL        := !hit
+          REFILL        := !hit || refill_svadu
           TRANSLATED    := lineTranslated
           PAGE_FAULT    := Mux(ps.req.LOAD, !allow_read, False) ||
                            Mux(ps.req.STORE, !allow_write, False) ||
@@ -380,9 +383,10 @@ class ShadowMmuPlugin(var spec : MmuSpec,
             storageLevel.write.data.virtualAddress  := virtual(specLevel.virtualOffset + log2Up(storageLevel.slp.sets), widthOf(storageLevel.write.data.virtualAddress) bits)
             storageLevel.write.data.physicalAddress := (load.levelToPhysicalAddress(levelId) >> specLevel.virtualOffset).resized
             storageLevel.write.data.allowRead       := load.flags.R
-            storageLevel.write.data.allowWrite      := load.flags.W && load.flags.D
+            storageLevel.write.data.allowWrite      := load.flags.W
             storageLevel.write.data.allowExecute    := load.flags.X
-
+            storageLevel.write.data.dirty           := load.flags.D
+            storageLevel.write.data.accessed        := load.flags.A
             storageLevel.allocId.increment()
           }
           goto(DONE(levelId))

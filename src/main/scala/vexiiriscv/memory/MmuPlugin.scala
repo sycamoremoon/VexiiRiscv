@@ -99,6 +99,7 @@ class MmuTlbStorageEntry(
   val virtualAddress  = UInt(vw-log2Up(depth) bits)
   val physicalAddress = UInt(pw bits)
   val allowRead, allowWrite, allowExecute = Bool()
+  val accessed, dirty = Bool()
   val allowUser = p.checkUser generate Bool()
   val guest = p.checkGuest generate Bool()
 
@@ -370,6 +371,9 @@ class MmuPlugin(var spec : MmuSpec,
         val lineAllowUser    = entriesMux(_.allowUser)
         val lineTranslated   = entriesMux(_.physicalAddressFrom(ps.req.PRE_ADDRESS))
         val lineIsGuest      = entriesMux(_.guest)
+        val lineDirty        = entriesMux(_.dirty)
+        val lineAccessed     = entriesMux(_.accessed)
+        val refill_svadu      = (!lineDirty && ps.req.STORE)
 
         val requireMmuLockup  = CombInit(ps.usage match {
           case LOAD_STORE => ps.req.FORCE_GUEST.mux(vsatpValid, api.lsuTranslationEnable)
@@ -386,7 +390,7 @@ class MmuPlugin(var spec : MmuSpec,
           val allow_write   = lineAllowWrite
 
           HAZARD        := False
-          REFILL        := !hit
+          REFILL        := !hit || refill_svadu
           TRANSLATED    := lineTranslated
           PAGE_FAULT    := (lineAllowUser && nominalSupervisor && !allow_sum) ||
                             (!lineAllowUser && nominalUser) ||
@@ -432,6 +436,7 @@ class MmuPlugin(var spec : MmuSpec,
       val portOhReg = Reg(Bits(refillPorts.size bits))
       val storageOhReg = Reg(Bits(storages.size bits))
       val storageEnable = Reg(Bool())
+      val permission = Reg(cloneOf(arbiter.io.output.permission))
       val isTwoStage = Reg(Bool())
 
       arbiter.io.output.ready := False
@@ -445,6 +450,7 @@ class MmuPlugin(var spec : MmuSpec,
           storageOhReg := UIntToOh(arbiter.io.output.storageId)
           storageEnable := arbiter.io.output.storageEnable
           virtual := arbiter.io.output.address
+          permission := arbiter.io.output.permission
           load.address := (ppn @@ spec.levels.last.vpn(arbiter.io.output.address) @@ U(0, log2Up(spec.entryBytes) bits)).resized
           isTwoStage := arbiter.io.output.indirect
           arbiter.io.output.ready := True
@@ -634,9 +640,11 @@ class MmuPlugin(var spec : MmuSpec,
             storageLevel.write.data.virtualAddress  := virtual(specLevel.virtualOffset + log2Up(storageLevel.slp.sets), widthOf(storageLevel.write.data.virtualAddress) bits)
             storageLevel.write.data.physicalAddress := (load.levelToPhysicalAddress(levelId) >> specLevel.virtualOffset).resized
             storageLevel.write.data.allowRead       := load.flags.R
-            storageLevel.write.data.allowWrite      := load.flags.W && load.flags.D
+            storageLevel.write.data.allowWrite      := load.flags.W
             storageLevel.write.data.allowExecute    := load.flags.X
             storageLevel.write.data.allowUser       := load.flags.U
+            storageLevel.write.data.dirty           := load.flags.D
+            storageLevel.write.data.accessed        := load.flags.A
             storageLevel.write.data.guest           := isTwoStage
 
             storageLevel.allocId.increment()
