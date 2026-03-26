@@ -15,7 +15,7 @@ import vexiiriscv.execute.cfu.{CfuBusParameter, CfuPlugin, CfuPluginEncoding}
 import vexiiriscv.execute.fpu.{FpuAddSharedParam, FpuMulParam}
 import vexiiriscv.execute.lsu._
 import vexiiriscv.fetch.{FetchCachelessAxi4Plugin, FetchCachelessPlugin, FetchCachelessWishbonePlugin, FetchL1Axi4Plugin, FetchL1Plugin, FetchL1WishbonePlugin, PrefetcherNextLinePlugin}
-import vexiiriscv.memory.{MmuPortParameter, MmuSpec, MmuStorageLevel, MmuStorageParameter, PmpParam, PmpPlugin, PmpPortParameter, ShadowMmuPlugin, TranslatedDBusAccessPlugin}
+import vexiiriscv.memory.{MmuPortParameter, MmuSpec, MmuStorageLevel, MmuStorageParameter, PmpParam, PmpPlugin, PmpPortParameter, ShadowMmuPlugin, TranslatedDBusAccessPlugin, SvaduPlugin}
 import vexiiriscv.misc._
 import vexiiriscv.prediction.{LearnCmd, LearnPlugin}
 import vexiiriscv.riscv.{FloatRegFile, IntRegFile}
@@ -575,6 +575,7 @@ class ParamSimple() {
   def withRvb = checkISA("zba", "zbb", "zbc", "zbs")
   def withSscofpmf = checkISA("sscofpmf")
   def withSstc = checkISA("sstc")
+  def withSvadu = checkISA("svadu")
   def withSxaia = checkISA("smaia") || checkISA("ssaia")
   def withSscsrind = checkISA("sscsrind")
 
@@ -604,7 +605,7 @@ class ParamSimple() {
     if(withSxaia) addISA("smcsrind", "sscsrind")
 
     if(!checkISA("s")) {
-      removeISA("sscsrind", "ssaia", "sstc")
+      removeISA("sscsrind", "ssaia", "sstc", "svadu")
     }
     if(checkISA("zihpm") || withSstc) addISA("zicntr")
 
@@ -612,6 +613,7 @@ class ParamSimple() {
     if(withHypervisor) privParam.withHypervisor = true
     if(withUser) privParam.withUser = true
     if(withSstc) privParam.withSSTC = true
+    if(withSvadu) privParam.withSvadu = true
     if(withRdTime) privParam.withRdTime = true
     if(withInterrutpFilter) privParam.withInterrutpFilter = true
     if(withRvc) withAlignerBuffer = true
@@ -799,6 +801,7 @@ class ParamSimple() {
     opt[Unit]("pmp-tor-disable") action { (v, c) => pmpParam.withTor = false }
     opt[Unit]("with-rdtime") action { (v, c) => addISA("zicntr") }
     opt[Unit]("with-sstc") action { (v, c) => addISA("sstc") }
+    opt[Unit]("with-svadu") action { (v, c) => addISA("svadu") }
     opt[Unit]("with-cfu") action { (v, c) => withCfu = true }
     opt[Int]("asid-width") action{ (v,c) => asidWidth = v }
     opt[Int]("gshare-bytes") action{ (v,c) => gshareBytes = v }
@@ -863,6 +866,7 @@ class ParamSimple() {
         vmidWidth = 0 /* TODO */
       )
     }
+    if(withSvadu) plugins += new SvaduPlugin
 
     plugins += new PmpPlugin(pmpParam)
 

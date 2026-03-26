@@ -82,7 +82,8 @@ object MmuSpec{
 
 case class MmuTlbStorageEntryParam(
   checkUser: Boolean,
-  checkGuest: Boolean
+  checkGuest: Boolean,
+  checkSvadu: Boolean
 )
 
 class MmuTlbStorageEntry(
@@ -99,6 +100,7 @@ class MmuTlbStorageEntry(
   val virtualAddress  = UInt(vw-log2Up(depth) bits)
   val physicalAddress = UInt(pw bits)
   val allowRead, allowWrite, allowExecute = Bool()
+  val dirty = p.checkSvadu generate Bool()
   val allowUser = p.checkUser generate Bool()
   val guest = p.checkGuest generate Bool()
 
@@ -227,9 +229,11 @@ class MmuPlugin(var spec : MmuSpec,
     val access = host[TranslatedDBusAccessService]
     val ram = host[CsrRamService]
     val pcs = host.get[PerformanceCounterService]
+    val svadu = host[SvaduPlugin]
 
     val csrLock = retains(csr.csrLock, ram.csrLock)
     val accessLock = retains(access.accessRetainer)
+    val svaduLock = retains(svadu.svaduRetainer)
     val buildBefore = retains(List(host[PipelineBuilderPlugin].elaborationLock) ++ pcs.map(_.elaborationLock))
 
 
@@ -243,8 +247,10 @@ class MmuPlugin(var spec : MmuSpec,
     assert(VIRTUAL_WIDTH.get == XLEN.get || XLEN.get > VIRTUAL_WIDTH.get && VIRTUAL_WIDTH.get > physicalWidth)
 
     val accessBus = access.newDBusAccess(priv.implementHypervisor)
+    val svaduPort = svadu.newPort(priv.implementHypervisor)
 
     accessLock.release()
+    svaduLock.release()
 
     def physCap(range : Range) = (range.high min physicalWidth-1) downto range.low
 
@@ -313,7 +319,8 @@ class MmuPlugin(var spec : MmuSpec,
     // Implement the hardware for all the TLB storages
     val tlbGenerateParam = MmuTlbStorageEntryParam(
       checkUser   = true,
-      checkGuest  = true
+      checkGuest  = true,
+      checkSvadu  = true,
     )
     val storages = for(ss <- storageSpecs) yield new MmuTlbStorage(spec, physicalWidth, tlbGenerateParam, ss)
 
@@ -323,6 +330,9 @@ class MmuPlugin(var spec : MmuSpec,
     def mprv = priv.logic.harts(0).m.status.mprv
     def mpp = priv.logic.harts(0).m.status.mpp
     val effectiveGuest = isGuest || (mprv && priv.logic.harts(0).m.status.mpv)
+    val svaduEnabled = priv.p.withSvadu.mux((priv.logic.harts(0).m.envcfg.adue && !PrivilegeMode.isGuest(priv.getPrivilege(0))) ||
+                                          priv.implementHypervisor.mux(priv.logic.harts(0).h.envcfg.adueRO && PrivilegeMode.isGuest(priv.getPrivilege(0)), False),
+                                          False)
 
     val satpValid = satp.mode === spec.satpMode
     val vsatpValid = priv.implementHypervisor.mux(vsatp.mode === spec.satpMode, False)
@@ -378,6 +388,8 @@ class MmuPlugin(var spec : MmuSpec,
         val lineAllowUser    = entriesMux(_.allowUser)
         val lineTranslated   = entriesMux(_.physicalAddressFrom(ps.req.PRE_ADDRESS))
         val lineIsGuest      = entriesMux(_.guest)
+        val lineDirty        = entriesMux(_.dirty)
+        val refill_svadu     = svaduEnabled.mux(!lineDirty && ps.req.STORE, False)
 
         val requireMmuLockup  = CombInit(ps.usage match {
           case LOAD_STORE => ps.req.FORCE_GUEST.mux(vsatpValid, api.lsuTranslationEnable)
@@ -394,7 +406,7 @@ class MmuPlugin(var spec : MmuSpec,
           val allow_write   = lineAllowWrite
 
           HAZARD        := False
-          REFILL        := !hit
+          REFILL        := !hit || refill_svadu
           TRANSLATED    := lineTranslated
           PAGE_FAULT    := (lineAllowUser && nominalSupervisor && !allow_sum) ||
                             (!lineAllowUser && nominalUser) ||
@@ -421,7 +433,7 @@ class MmuPlugin(var spec : MmuSpec,
     // Implement the TLB storage refill FSM
     val refill = new StateMachine{
       val IDLE = new State
-      val CMD, RSP, REFILL, DONE = List.fill(spec.levels.size)(new State)
+      val CMD, RSP, UPDATE, REFILL, DONE = List.fill(spec.levels.size)(new State)
 
       val busy = !isActive(IDLE)
       val virtual = Reg(UInt(MIXED_WIDTH bits))
@@ -440,6 +452,7 @@ class MmuPlugin(var spec : MmuSpec,
       val portOhReg = Reg(Bits(refillPorts.size bits))
       val storageOhReg = Reg(Bits(storages.size bits))
       val storageEnable = Reg(Bool())
+      val permission = Reg(cloneOf(arbiter.io.output.permission))
       val isTwoStage = Reg(Bool())
 
       arbiter.io.output.ready := False
@@ -453,6 +466,7 @@ class MmuPlugin(var spec : MmuSpec,
           storageOhReg := UIntToOh(arbiter.io.output.storageId)
           storageEnable := arbiter.io.output.storageEnable
           virtual := arbiter.io.output.address
+          permission := arbiter.io.output.permission
           load.address := (ppn @@ spec.levels.last.vpn(arbiter.io.output.address) @@ U(0, log2Up(spec.entryBytes) bits)).resized
           isTwoStage := arbiter.io.output.indirect
           arbiter.io.output.ready := True
@@ -493,8 +507,9 @@ class MmuPlugin(var spec : MmuSpec,
         val reservedFault = (readed & spec.pteReserved).orR
         val exception = !flags.V || (!flags.R && flags.W) || rsp.error.orR ||
                         (!leaf && (flags.D | flags.A | flags.U)) ||
-                        (leaf && !flags.A) ||
+                        svaduEnabled.mux(False, leaf && !flags.A) ||
                         reservedFault
+        val svade_exception = (leaf && !flags.A) || (leaf && permission.write && !flags.D)
         val levelToPhysicalAddress = List.fill(spec.levels.size)(UInt(spec.physicalWidth bits))
         val levelException = List.fill(spec.levels.size)(False)
         val nextLevelBase = U(0, PHYSICAL_WIDTH bits)
@@ -512,11 +527,23 @@ class MmuPlugin(var spec : MmuSpec,
         }
       }
 
+      val hwUpdateAD = priv.p.withSvadu generate new Area {
+        svaduPort.rsp.ready      := False
+        svaduPort.cmd.valid      := False
+        svaduPort.cmd.data       := B(0)
+        svaduPort.cmd.address    := U(0)
+        svaduPort.cmd.isTwoStage := False
+        svaduPort.cmd.permission.read    := False
+        svaduPort.cmd.permission.write   := False
+        svaduPort.cmd.permission.execute := False
+      }
+
       for (port <- refillPorts; rsp = port.rsp) {
         rsp.valid := False
         rsp.pageFault.assignDontCare()
         rsp.accessFault.assignDontCare()
         rsp.guestFault.assignDontCare()
+        rsp.svaduFault.assignDontCare()
         rsp.bypass.assignDontCare()
         rsp.pf.assignDontCare()
         rsp.ae_ptw.assignDontCare()
@@ -546,7 +573,7 @@ class MmuPlugin(var spec : MmuSpec,
     }
 
       val fetch = for((level, levelId) <- spec.levels.zipWithIndex) yield new Area{
-        val pteFault = (load.exception || load.levelException(levelId)) || (levelId == 0).mux(!load.leaf, False)
+        val pteFault = (load.exception || load.levelException(levelId)) || (levelId == 0).mux(!load.leaf, False) || svaduEnabled.mux(False, load.svade_exception)
         val pteReadError = load.rsp.error(0)
         val shadowReadError = load.rsp.error(1)
         val leafAccessFault = load.levelToPhysicalAddress(levelId).drop(physicalWidth) =/= 0 //levelToPhysicalAddress is used to emit fault when the final translated address it outside the range of the physical addresses
@@ -567,12 +594,14 @@ class MmuPlugin(var spec : MmuSpec,
               goto(IDLE)
             }
           }
+          if(priv.p.withSvadu) svaduPort.rsp.ready := True
 
           refillPorts.map(_.rsp).foreach { o =>
             o.bypass := False
             o.pageFault := pageFault
             o.accessFault := accessFault
             o.guestFault := shadowReadError
+            o.svaduFault := priv.p.withSvadu.mux(svaduPort.rsp.error.orR, False)
             o.pf  := pageFault
             o.ae_ptw    := accessFault && !load.leaf
             o.ae_final  := accessFault && load.leaf //Note so sure
@@ -604,6 +633,8 @@ class MmuPlugin(var spec : MmuSpec,
                 case 0 => {
                   when(!storageEnable || translationFault) {
                     goto(DONE(levelId))
+                  } elsewhen(load.svade_exception && svaduEnabled) {
+                    goto(UPDATE(levelId))
                   } otherwise {
                     goto(REFILL(levelId))
                   }
@@ -631,6 +662,21 @@ class MmuPlugin(var spec : MmuSpec,
           }
         }
 
+        if(priv.p.withSvadu) {
+          accessFault.setWhen(svaduPort.rsp.error(0))
+          shadowReadError.setWhen(svaduPort.rsp.error(1))
+          UPDATE(levelId) whenIsActive {
+            svaduPort.cmd.valid := True
+            svaduPort.cmd.data := load.rsp.data
+            svaduPort.cmd.address := load.cmd.address
+            svaduPort.cmd.permission := permission
+            if(priv.implementHypervisor) svaduPort.cmd.isTwoStage := isTwoStage
+            when(svaduPort.rsp.valid) {
+              goto(REFILL(levelId))
+            }
+          }
+        }
+
         REFILL(levelId) whenIsActive {
           for((storage, sid) <- storages.zipWithIndex){
             val storageLevelId = storage.self.p.levels.filter(_.id <= levelId).map(_.id).max
@@ -644,9 +690,10 @@ class MmuPlugin(var spec : MmuSpec,
             storageLevel.write.data.virtualAddress  := virtual(specLevel.virtualOffset + log2Up(storageLevel.slp.sets), widthOf(storageLevel.write.data.virtualAddress) bits)
             storageLevel.write.data.physicalAddress := (load.levelToPhysicalAddress(levelId) >> specLevel.virtualOffset).resized
             storageLevel.write.data.allowRead       := load.flags.R
-            storageLevel.write.data.allowWrite      := load.flags.W && load.flags.D
+            storageLevel.write.data.allowWrite      := load.flags.W && svaduEnabled.mux(True, load.flags.D)
             storageLevel.write.data.allowExecute    := load.flags.X
             storageLevel.write.data.allowUser       := load.flags.U
+            storageLevel.write.data.dirty           := svaduEnabled.mux(permission.write, load.flags.D)
             storageLevel.write.data.guest           := isTwoStage
 
             storageLevel.allocId.increment()

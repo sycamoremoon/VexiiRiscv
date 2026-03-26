@@ -37,16 +37,19 @@ class ShadowMmuPlugin(var spec : MmuSpec,
     val ram = host[CsrRamService]
     val pcs = host.get[PerformanceCounterService]
     val mmu = host[MmuPlugin]
-
+    val svadu = host[SvaduPlugin]
     val csrLock = retains(csr.csrLock, ram.csrLock)
     val accessLock = retains(access.accessRetainer)
+    val svaduLock = retains(svadu.svaduRetainer)
     val buildBefore = retains(List(host[PipelineBuilderPlugin].elaborationLock) ++ pcs.map(_.elaborationLock))
 
     awaitBuild()
 
+    val svaduPort = svadu.newPort(false)
     val accessBus = access.newDBusAccess(false)
 
     accessLock.release()
+    svaduLock.release()
 
     def physCap(range : Range) = (range.high min physicalWidth-1) downto range.low
 
@@ -86,7 +89,8 @@ class ShadowMmuPlugin(var spec : MmuSpec,
     // Implement the hardware for all the TLB storages
     val tlbGenerateParam = MmuTlbStorageEntryParam(
       checkUser   = false,
-      checkGuest  = false
+      checkGuest  = false,
+      checkSvadu  = true,
     )
     val storages = for(ss <- storageSpecs) yield new MmuTlbStorage(spec, physicalWidth, tlbGenerateParam, ss)
 
@@ -96,6 +100,7 @@ class ShadowMmuPlugin(var spec : MmuSpec,
     val isUser = priv.isUSer(0)
     val isVirtual = PrivilegeMode.isGuest(priv.getPrivilege(0))
     def mprv = priv.logic.harts(0).m.status.mprv
+    val svaduEnabled = priv.p.withSvadu.mux(priv.logic.harts(0).h.envcfg.adueRO && isVirtual, False)
 
     api.fetchTranslationEnable := hgatp.mode === spec.satpMode
     api.fetchTranslationEnable clearWhen(!isVirtual)
@@ -135,6 +140,8 @@ class ShadowMmuPlugin(var spec : MmuSpec,
         val lineAllowRead    = entriesMux(_.allowRead)
         val lineAllowWrite   = entriesMux(_.allowWrite)
         val lineTranslated   = entriesMux(_.physicalAddressFrom(ps.req.PRE_ADDRESS))
+        val lineDirty        = entriesMux(_.dirty)
+        val refill_svadu     = svaduEnabled.mux(!lineDirty && ps.req.STORE, False)
 
         val requireMmuLockup  = CombInit(ps.usage match {
           case LOAD_STORE => api.lsuTranslationEnable || (ps.req.FORCE_GUEST && hgatp.mode === spec.satpMode)
@@ -150,7 +157,7 @@ class ShadowMmuPlugin(var spec : MmuSpec,
           val allow_write   = lineAllowWrite
 
           HAZARD        := False
-          REFILL        := !hit
+          REFILL        := !hit || refill_svadu
           TRANSLATED    := lineTranslated
           PAGE_FAULT    := Mux(ps.req.LOAD, !allow_read, False) ||
                            Mux(ps.req.STORE, !allow_write, False) ||
@@ -175,7 +182,7 @@ class ShadowMmuPlugin(var spec : MmuSpec,
     // Implement the TLB storage refill FSM
     val refill = new StateMachine{
       val IDLE, BARE = new State
-      val CMD, RSP, REFILL, DONE = List.fill(spec.levels.size)(new State)
+      val CMD, RSP, UPDATE, REFILL, DONE = List.fill(spec.levels.size)(new State)
 
       val busy = !isActive(IDLE)
       val virtual = Reg(UInt(MIXED_WIDTH bits))
@@ -269,8 +276,10 @@ class ShadowMmuPlugin(var spec : MmuSpec,
         val reservedFault = (readed & spec.pteReserved).orR
         val exception = !flags.V || (!flags.R && flags.W) || rsp.error.orR ||
                         (!leaf && (flags.D | flags.A | flags.U)) ||
-                        (leaf && (!flags.A | !flags.U)) ||
+                        (leaf && !flags.U) ||
+                        svaduEnabled.mux(False, leaf && !flags.A) ||
                         reservedFault
+        val svade_exception = (leaf && !flags.A) || (leaf && permission.write && !flags.D)
         val levelToPhysicalAddress = List.fill(spec.levels.size)(UInt(spec.physicalWidth bits))
         val levelException = List.fill(spec.levels.size)(False)
         val nextLevelBase = U(0, PHYSICAL_WIDTH bits)
@@ -288,11 +297,22 @@ class ShadowMmuPlugin(var spec : MmuSpec,
         }
       }
 
+      priv.p.withSvadu generate new Area {
+        svaduPort.rsp.ready      := False
+        svaduPort.cmd.valid      := False
+        svaduPort.cmd.data       := B(0)
+        svaduPort.cmd.address    := U(0)
+        svaduPort.cmd.permission.read    := False
+        svaduPort.cmd.permission.write   := False
+        svaduPort.cmd.permission.execute := False
+      }
+
       for (port <- refillPorts; rsp = port.rsp) {
         rsp.valid := False
         rsp.pageFault.assignDontCare()
         rsp.accessFault.assignDontCare()
         rsp.guestFault.assignDontCare()
+        rsp.svaduFault := False
         rsp.bypass.assignDontCare()
         rsp.pf.assignDontCare()
         rsp.ae_ptw.assignDontCare()
@@ -312,14 +332,14 @@ class ShadowMmuPlugin(var spec : MmuSpec,
       }
 
       val fetch = for((level, levelId) <- spec.levels.zipWithIndex) yield new Area{
-        val pteFault = load.exception || load.levelException(levelId) || (levelId == 0).mux(!load.leaf, False)
+        val pteFault = load.exception || load.levelException(levelId) || (levelId == 0).mux(!load.leaf, False) || svaduEnabled.mux(False, load.svade_exception)
         val pteReadError = load.rsp.error.orR
         val leafAccessFault = load.levelToPhysicalAddress(levelId).drop(physicalWidth) =/= 0 //levelToPhysicalAddress is used to emit fault when the final translated address it outside the range of the physical addresses
         val pageFault = !pteReadError && pteFault
         val accessFault = pteReadError || !pteFault && leafAccessFault
         val translationFault = pteFault || leafAccessFault
         val permissionFault = Mux(permission.read, !(load.flags.R || (load.flags.X && mmu.logic.status.mxr)), False) ||
-                              Mux(permission.write, !(load.flags.W && load.flags.D), False) ||
+                              Mux(permission.write, !(load.flags.W || svaduEnabled.mux(True, load.flags.D)), False) ||
                               Mux(permission.execute, !(load.flags.X), False)
 
         CMD(levelId) whenIsActive{
@@ -342,6 +362,8 @@ class ShadowMmuPlugin(var spec : MmuSpec,
                 case 0 => {
                   when(!storageEnable || translationFault) {
                     goto(DONE(levelId))
+                  } elsewhen(load.svade_exception && svaduEnabled) {
+                    goto(UPDATE(levelId))
                   } otherwise {
                     goto(REFILL(levelId))
                   }
@@ -369,6 +391,19 @@ class ShadowMmuPlugin(var spec : MmuSpec,
           }
         }
 
+        if(priv.p.withSvadu) {
+          pageFault.setWhen(svaduPort.rsp.error(0))
+          UPDATE(levelId) whenIsActive {
+            svaduPort.cmd.valid := True
+            svaduPort.cmd.data := load.rsp.data
+            svaduPort.cmd.address := load.cmd.address
+            svaduPort.cmd.permission := permission
+            when(svaduPort.rsp.valid) {
+              goto(REFILL(levelId))
+            }
+          }
+        }
+
         REFILL(levelId) whenIsActive {
           for((storage, sid) <- storages.zipWithIndex){
             val storageLevelId = storage.self.p.levels.filter(_.id <= levelId).map(_.id).max
@@ -382,9 +417,9 @@ class ShadowMmuPlugin(var spec : MmuSpec,
             storageLevel.write.data.virtualAddress  := virtual(specLevel.virtualOffset + log2Up(storageLevel.slp.sets), widthOf(storageLevel.write.data.virtualAddress) bits)
             storageLevel.write.data.physicalAddress := (load.levelToPhysicalAddress(levelId) >> specLevel.virtualOffset).resized
             storageLevel.write.data.allowRead       := load.flags.R
-            storageLevel.write.data.allowWrite      := load.flags.W && load.flags.D
+            storageLevel.write.data.allowWrite      := load.flags.W && svaduEnabled.mux(True, load.flags.D)
             storageLevel.write.data.allowExecute    := load.flags.X
-
+            storageLevel.write.data.dirty           := svaduEnabled.mux(permission.write, load.flags.D)
             storageLevel.allocId.increment()
           }
           goto(DONE(levelId))
@@ -400,6 +435,7 @@ class ShadowMmuPlugin(var spec : MmuSpec,
             }
           }
 
+          if(priv.p.withSvadu) svaduPort.rsp.ready := True
           refillPorts.map(_.rsp).foreach { o =>
             val translatedAddress = load.levelToPhysicalAddress(levelId)
             translatedAddress(0, level.virtualOffset bits) := virtual.resize(level.virtualOffset)
