@@ -165,15 +165,27 @@ trait DBusAccessService{
   def newDBusAccess() : DBusAccess = dbusAccesses.addRet(new DBusAccess(accessRefillCount))
   val dbusAccesses = ArrayBuffer[DBusAccess]()
   val accessRetainer = Retainer()
+  def newDBusStore() : DBusStore = dbusStores.addRet(new DBusStore())
+  val dbusStores = ArrayBuffer[DBusStore]()
+  val storeRetainer = Retainer()
 }
 
 case class DBusAccess(refillCount : Int) extends Bundle {
   val cmd = Stream(DBusAccessCmd())
   val rsp = Flow(DBusAccessRsp(refillCount))
 }
+case class DBusStore() extends Bundle {
+  val cmd = Stream(DBusStoreCmd())
+  val rsp = Flow(DBusStoreRsp())
+}
 
 case class DBusAccessCmd() extends Bundle {
   val address = Global.PHYSICAL_ADDRESS()
+  val size = UInt(2 bits)
+}
+case class DBusStoreCmd() extends Bundle {
+  val address = Global.PHYSICAL_ADDRESS()
+  val data = Bits(Riscv.LSLEN bits)
   val size = UInt(2 bits)
 }
 
@@ -183,6 +195,10 @@ case class DBusAccessRsp(refillCount : Int) extends Bundle {
   val redo = Bool()
   val waitSlot = Bits(refillCount bits)
   val waitAny  = Bool()
+}
+case class DBusStoreRsp() extends Bundle {
+  val error = Bool()
+  val redo = Bool()
 }
 
 /*
