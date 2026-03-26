@@ -58,7 +58,7 @@ class LsuCachelessPlugin(var layer : LaneLayer,
                          var pmpPortParameter : Any) extends FiberPlugin with DBusAccessService with LsuCachelessBusProvider {
   import timingParameter._
 
-  val WITH_RSP, WITH_ACCESS, FENCE = Payload(Bool())
+  val WITH_RSP, WITH_ACCESS, WITH_STORE, FENCE = Payload(Bool())
   override def accessRefillCount: Int = 0
   override def accessWake: Bits = B(0)
   override def getLsuCachelessBus(): LsuCachelessBus = logic.bus
@@ -441,6 +441,25 @@ class LsuCachelessPlugin(var layer : LaneLayer,
           if(withAmo) bus.cmd.amoEnable := False
         }
       }
+      val store = dbusStores.nonEmpty generate new Area {
+        assert(dbusStores.size == 1)
+        val allowIt = !(isValid && SEL) && !cmdSent && !access.cmd.valid
+        val cmd = dbusStores.head.cmd
+        cmd.ready := allowIt && !elp.isFreezed()
+
+        val storeSent = RegInit(False) setWhen(cmd.fire) clearWhen(!elp.isFreezed())
+        WITH_STORE := storeSent || cmd.fire
+        when(allowIt) {
+          bus.cmd.valid := cmd.valid
+          bus.cmd.write := True
+          bus.cmd.data  := cmd.data
+          bus.cmd.address := cmd.address
+          bus.cmd.size := cmd.size
+          bus.cmd.fromHart := False
+          bus.cmd.io := False
+          if(withAmo) bus.cmd.amoEnable := False
+        }
+      }
     }
 
     val onJoin = new joinCtrl.Area {
@@ -490,11 +509,19 @@ class LsuCachelessPlugin(var layer : LaneLayer,
         rsp.redo := False
         rsp.waitAny := False
       }
+      val store = dbusStores.nonEmpty generate new Area {
+        assert(dbusStores.size == 1)
+        val rsp = dbusStores.head.rsp
+        rsp.valid := WITH_STORE && pop
+        rsp.error := rspPayload.error
+        rsp.redo := False
+      }
     }
 
     for(eid <- forkAt + 1 to joinAt) {
       elp.execute(eid).up(WITH_RSP).setAsReg().init(False)
       elp.execute(eid).up(WITH_ACCESS).setAsReg().init(False)
+      elp.execute(eid).up(WITH_STORE).setAsReg().init(False)
     }
 
     val onWb = new wbCtrl.Area {
