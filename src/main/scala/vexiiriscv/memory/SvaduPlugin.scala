@@ -16,6 +16,10 @@ case class SvaduCmd(requestGuest : Boolean)  extends Bundle {
     val isTwoStage = requestGuest generate Bool()
 }
 
+case class SvaduRsp()  extends Bundle {
+    val error = Bool()
+}
+
 class SvaduPlugin extends FiberPlugin {
 
     val logic = during setup new Area {
@@ -28,12 +32,16 @@ class SvaduPlugin extends FiberPlugin {
         val storeBus = tdbs.newDBusAccess(priv.implementHypervisor)
         storeLock.release()
 
+        val rsp = Flow(SvaduRsp())
+        rsp.error := False
+        rsp.valid := False
+
         val cmd = Stream(SvaduCmd(priv.implementHypervisor))
         cmd.data.assignDontCare()
         cmd.address.assignDontCare()
         cmd.permission.assignDontCare()
-        cmd.valid.clear()
-        cmd.ready.clear()
+        cmd.valid := False
+        cmd.ready := False
         if(priv.implementHypervisor) cmd.isTwoStage.clear()
         storeBus.cmd.valid := False
         storeBus.cmd.size := U(log2Up(8))
@@ -48,6 +56,7 @@ class SvaduPlugin extends FiberPlugin {
             setEntry(IDLE)
             IDLE whenIsActive {
                 when(cmd.valid) {
+                    cmd.ready := True
                     goto(CMD)
                 }
             }
@@ -70,7 +79,8 @@ class SvaduPlugin extends FiberPlugin {
             }
 
             DONE whenIsActive {
-                cmd.ready := True
+                rsp.valid := True
+                rsp.error := storeBus.rsp.error(1) // Only care about guest-page fault
                 goto(IDLE)
             }
         }

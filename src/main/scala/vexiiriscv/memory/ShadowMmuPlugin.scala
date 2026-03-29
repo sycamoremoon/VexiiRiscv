@@ -298,6 +298,7 @@ class ShadowMmuPlugin(var spec : MmuSpec,
         rsp.pageFault.assignDontCare()
         rsp.accessFault.assignDontCare()
         rsp.guestFault.assignDontCare()
+        rsp.svaduFault := False
         rsp.bypass.assignDontCare()
         rsp.pf.assignDontCare()
         rsp.ae_ptw.assignDontCare()
@@ -384,7 +385,7 @@ class ShadowMmuPlugin(var spec : MmuSpec,
             svadu.get.logic.cmd.address := load.cmd.address
             svadu.get.logic.cmd.permission := permission
             if(priv.implementHypervisor) svadu.get.logic.cmd.isTwoStage := False
-            when(svadu.get.logic.cmd.ready === True) {
+            when(svadu.get.logic.rsp.valid === True) {
               goto(REFILL(levelId))
             }
           }

@@ -516,6 +516,7 @@ class MmuPlugin(var spec : MmuSpec,
         rsp.pageFault.assignDontCare()
         rsp.accessFault.assignDontCare()
         rsp.guestFault.assignDontCare()
+        rsp.svaduFault.assignDontCare()
         rsp.bypass.assignDontCare()
         rsp.pf.assignDontCare()
         rsp.ae_ptw.assignDontCare()
@@ -553,6 +554,7 @@ class MmuPlugin(var spec : MmuSpec,
         val accessFault = pteReadError || (!pteFault && leafAccessFault)
         val guestFault = shadowReadError && !pteReadError
         val translationFault = pteFault || leafAccessFault
+        val svaduFault = Reg(False)
 
         def doneLogic() : Unit = {
           val translatedAddress = load.levelToPhysicalAddress(levelId)
@@ -572,6 +574,7 @@ class MmuPlugin(var spec : MmuSpec,
             o.pageFault := pageFault
             o.accessFault := accessFault
             o.guestFault := shadowReadError
+            o.svaduFault := svaduFault
             o.pf  := pageFault
             o.ae_ptw    := accessFault && !load.leaf
             o.ae_final  := accessFault && load.leaf //Note so sure
@@ -640,7 +643,8 @@ class MmuPlugin(var spec : MmuSpec,
             svadu.get.logic.cmd.address := load.cmd.address
             svadu.get.logic.cmd.permission := permission
             if(priv.implementHypervisor) svadu.get.logic.cmd.isTwoStage := isTwoStage
-            when(svadu.get.logic.cmd.ready === True) {
+            when(svadu.get.logic.rsp.valid === True) {
+              svaduFault := svadu.get.logic.rsp.error
               goto(REFILL(levelId))
             }
           }

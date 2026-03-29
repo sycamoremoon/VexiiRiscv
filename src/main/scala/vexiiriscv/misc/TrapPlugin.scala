@@ -691,6 +691,7 @@ class TrapPlugin(val trapAt : Int, val recordHtinst : Boolean) extends FiberPlug
                   buffer.trap.tval2 := atsPorts.refill.rsp.address.dropLow(2).asBits.resized
                   when (atsPorts.refill.rsp.guestFault) {
                     buffer.trap.pseudoUop := (XLEN.get == 32).mux(0x00002000, 0x00003000)
+                    buffer.trap.pseudoUop(5).setWhen(atsPorts.refill.rsp.svaduFault)
                   }
                 }
                 switch(atsPorts.refill.rsp.guestFault ## atsPorts.refill.rsp.accessFault ## pending.state.arg(1 downto 0)){
