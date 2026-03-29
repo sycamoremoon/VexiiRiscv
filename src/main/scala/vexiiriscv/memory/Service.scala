@@ -219,8 +219,10 @@ case class TranslatedDBusAccess(refillCount : Int, requestGuest : Boolean) exten
 
 case class TranslatedDBusAccessCmd(requestGuest : Boolean) extends Bundle {
   val address = Global.PHYSICAL_ADDRESS()
+  val data = Bits(Riscv.XLEN bits)
   val guest = requestGuest generate Bool()
   val size = UInt(2 bits)
+  val write = Bool()
 }
 
 case class TranslatedDBusAccessRsp(refillCount : Int) extends Bundle {

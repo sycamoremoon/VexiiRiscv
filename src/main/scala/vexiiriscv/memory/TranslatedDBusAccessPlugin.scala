@@ -13,13 +13,14 @@ class TranslatedDBusAccessPlugin() extends FiberPlugin with TranslatedDBusAccess
   val logic = during setup new Area{
     val access = host[DBusAccessService]
     val ats = host.find[AddressTranslationService](_.isShadowMmu)
-    val accessLock = retains(access.accessRetainer)
+    val accessLock = retains(access.accessRetainer, access.storeRetainer)
     val withAtsRedo = ats.mayNeedRedo
     val atsPortsLock = retains(ats.portsLock)
 
     awaitBuild()
 
     val accessBus = access.newDBusAccess()
+    val storeBus = access.newDBusStore()
     accessLock.release()
 
     val atsPort = withAtsRedo generate ats.newRefillPort()
@@ -42,9 +43,17 @@ class TranslatedDBusAccessPlugin() extends FiberPlugin with TranslatedDBusAccess
     val cmd = accessBus.cmd
     val rsp = accessBus.rsp
 
+    val storeCmd = storeBus.cmd
+    val storeRsp = storeBus.rsp
+  
     cmd.valid     := False
     cmd.address   := U(0)
     cmd.size      := U(0)
+
+    storeCmd.valid     := False
+    storeCmd.address   := U(0)
+    storeCmd.size      := U(0)
+    storeCmd.data.assignDontCare()
 
     for (tda <- dbusAccesses) {
       tda.rsp.valid := False
@@ -62,6 +71,7 @@ class TranslatedDBusAccessPlugin() extends FiberPlugin with TranslatedDBusAccess
       val tcmd = tda.cmd
       val trsp = tda.rsp
       val size = generateTransPort generate Reg(cloneOf(tcmd.size))
+      val data = generateTransPort generate Reg(cloneOf(tcmd.data))
 
       setEntry(CMD)
 
@@ -73,19 +83,32 @@ class TranslatedDBusAccessPlugin() extends FiberPlugin with TranslatedDBusAccess
           if(generateTransPort) guestCtx.when(tcmd.guest) {
             atsPort.cmd.valid   := True
             atsPort.cmd.address := tcmd.address.resized
+            atsPort.cmd.permission.write := tcmd.write
             when(atsPort.cmd.ready) {
               tcmd.ready  := True
               size        := tcmd.size
+              data        := tcmd.data
               goto(ATS)
             }
           }
           guestCtx.otherwise {
-            cmd.valid     := True
             cmd.address   := tcmd.address
             cmd.size      := tcmd.size
-            when (cmd.ready) {
-              tcmd.ready  := True
-              goto(RSP)
+            storeCmd.address   := tcmd.address
+            storeCmd.size      := tcmd.size
+            storeCmd.data      := tcmd.data
+            when(tcmd.write) {
+              storeCmd.valid := True
+              when (storeCmd.ready) {
+                tcmd.ready := True
+                goto(RSP)
+              }
+            } otherwise {
+              cmd.valid := True
+              when (cmd.ready) {
+                tcmd.ready := True
+                goto(RSP)
+              }
             }
           }
         }
@@ -106,27 +129,49 @@ class TranslatedDBusAccessPlugin() extends FiberPlugin with TranslatedDBusAccess
             atsPort.rsp.ready   := True
             goto(CMD)
           } otherwise {
-            cmd.valid     := True
             cmd.address   := atsPort.rsp.address
             cmd.size      := size
-            when (cmd.ready) {
-              atsPort.rsp.ready := True
-              goto(RSP)
+            storeCmd.address   := atsPort.rsp.address
+            storeCmd.size      := size
+            storeCmd.data      := data
+            when(tcmd.write) {
+              storeCmd.valid := True
+              when (storeCmd.ready) {
+                atsPort.rsp.ready := True
+                goto(RSP)
+              }
+            } otherwise {
+              cmd.valid := True
+              when (cmd.ready) {
+                atsPort.rsp.ready := True
+                goto(RSP)
+              }
             }
           }
         }
       }
 
       RSP whenIsActive {
-        trsp.valid        := rsp.valid
-        trsp.data         := rsp.data
-        trsp.error(0)     := rsp.error
-        trsp.redo         := rsp.redo
-        trsp.waitSlot     := rsp.waitSlot
-        trsp.waitAny      := rsp.waitAny
-
-        when (rsp.valid) {
-          goto(CMD)
+        when(tcmd.write) {
+          trsp.valid        := storeRsp.valid
+          trsp.data         := B(0)
+          trsp.error(0)     := storeRsp.error
+          trsp.redo         := storeRsp.redo
+          trsp.waitSlot     := B(0)
+          trsp.waitAny      := False
+          when (storeRsp.valid) {
+            goto(CMD)
+          }
+        } otherwise {
+          trsp.valid        := rsp.valid
+          trsp.data         := rsp.data
+          trsp.error(0)     := rsp.error
+          trsp.redo         := rsp.redo
+          trsp.waitSlot     := rsp.waitSlot
+          trsp.waitAny      := rsp.waitAny
+          when (rsp.valid) {
+            goto(CMD)
+          }
         }
       }
     }
