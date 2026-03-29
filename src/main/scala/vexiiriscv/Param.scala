@@ -106,7 +106,6 @@ class ParamSimple() {
   var withDispatcherBuffer = false
   var hartCount = 1
   var disableMmu = false
-  var withSvadu = true
   var asidWidth = 0
   var physicalWidth = 32
   var resetVector = 0x80000000l
@@ -576,6 +575,7 @@ class ParamSimple() {
   def withRvb = checkISA("zba", "zbb", "zbc", "zbs")
   def withSscofpmf = checkISA("sscofpmf")
   def withSstc = checkISA("sstc")
+  def withSvadu = checkISA("svadu")
   def withSxaia = checkISA("smaia") || checkISA("ssaia")
   def withSscsrind = checkISA("sscsrind")
 
@@ -605,7 +605,7 @@ class ParamSimple() {
     if(withSxaia) addISA("smcsrind", "sscsrind")
 
     if(!checkISA("s")) {
-      removeISA("sscsrind", "ssaia", "sstc")
+      removeISA("sscsrind", "ssaia", "sstc", "svadu")
     }
     if(checkISA("zihpm") || withSstc) addISA("zicntr")
 
@@ -613,6 +613,7 @@ class ParamSimple() {
     if(withHypervisor) privParam.withHypervisor = true
     if(withUser) privParam.withUser = true
     if(withSstc) privParam.withSSTC = true
+    if(withSvadu) privParam.withSvadu = true
     if(withRdTime) privParam.withRdTime = true
     if(withInterrutpFilter) privParam.withInterrutpFilter = true
     if(withRvc) withAlignerBuffer = true
@@ -722,7 +723,6 @@ class ParamSimple() {
     opt[Unit]("with-hypervisor") action { (v, c) => addISA("h", "s", "u") }
     opt[Unit]("with-supervisor") action { (v, c) => addISA("s", "u") }
     opt[Unit]("with-user") action { (v, c) => addISA("u") }
-    opt[Unit]("with-svadu") action { (v, c) => withSvadu = true }
     opt[Unit]("without-mmu") action { (v, c) => disableMmu = false }
     opt[Unit]("without-mul") action { (v, c) => removeISA("m", "zmmul") }
     opt[Unit]("without-div") action { (v, c) => if(checkISA("m")) {removeISA("m"); addISA("zmmul")} }
@@ -801,6 +801,7 @@ class ParamSimple() {
     opt[Unit]("pmp-tor-disable") action { (v, c) => pmpParam.withTor = false }
     opt[Unit]("with-rdtime") action { (v, c) => addISA("zicntr") }
     opt[Unit]("with-sstc") action { (v, c) => addISA("sstc") }
+    opt[Unit]("with-svadu") action { (v, c) => addISA("svadu") }
     opt[Unit]("with-cfu") action { (v, c) => withCfu = true }
     opt[Int]("asid-width") action{ (v,c) => asidWidth = v }
     opt[Int]("gshare-bytes") action{ (v,c) => gshareBytes = v }

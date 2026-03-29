@@ -97,6 +97,7 @@ class ShadowMmuPlugin(var spec : MmuSpec,
     val isUser = priv.isUSer(0)
     val isVirtual = PrivilegeMode.isGuest(priv.getPrivilege(0))
     def mprv = priv.logic.harts(0).m.status.mprv
+    val svaduEnabled = (priv.logic.harts(0).h.envcfg.adueRO && isVirtual)
 
     api.fetchTranslationEnable := hgatp.mode === spec.satpMode
     api.fetchTranslationEnable clearWhen(!isVirtual)
@@ -348,7 +349,7 @@ class ShadowMmuPlugin(var spec : MmuSpec,
                 case 0 => {
                   when(!storageEnable || translationFault) {
                     goto(DONE(levelId))
-                  } elsewhen(load.svade_exception) {
+                  } elsewhen(load.svade_exception && svaduEnabled) {
                     if(svadu.isEmpty) goto(DONE(levelId))
                     else goto(UPDATE(levelId))
                   } otherwise {
@@ -406,8 +407,8 @@ class ShadowMmuPlugin(var spec : MmuSpec,
             storageLevel.write.data.allowRead       := load.flags.R
             storageLevel.write.data.allowWrite      := load.flags.W
             storageLevel.write.data.allowExecute    := load.flags.X
-            storageLevel.write.data.dirty           := svadu.isEmpty.mux(load.flags.D, permission.write.mux(True, load.flags.D))
-            storageLevel.write.data.accessed        := svadu.isEmpty.mux(load.flags.A, True)
+            storageLevel.write.data.dirty           := svadu.isEmpty.mux(load.flags.D, (permission.write && svaduEnabled).mux(True, load.flags.D))
+            storageLevel.write.data.accessed        := svadu.isEmpty.mux(load.flags.A, svaduEnabled.mux(True, load.flags.A))
             storageLevel.allocId.increment()
           }
           goto(DONE(levelId))

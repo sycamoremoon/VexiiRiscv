@@ -30,6 +30,7 @@ object PrivilegedParam{
     withHypervisor = false,
     withRdTime     = false,
     withSSTC       = false,
+    withSvadu      = false,
     withDebug      = false,
     withXs         = false,
     mstatusFsInit  = 0,
@@ -62,6 +63,7 @@ case class PrivilegedParam(var withSupervisor : Boolean,
                            var withHypervisor : Boolean,
                            var withRdTime : Boolean,
                            var withSSTC : Boolean,
+                           var withSvadu : Boolean,
                            var withDebug: Boolean,
                            var withXs : Boolean,
                            var withInterrutpFilter : Boolean,
@@ -677,13 +679,18 @@ class PrivilegedPlugin(val p : PrivilegedParam, val hartIds : Seq[Int]) extends 
 
         val envcfg = new Area {
           val stce = p.withSSTC.mux(RegInit(False), False)
+          val adue = p.withSvadu.mux(RegInit(False), False)
 
           if (XLEN.get == 32) {
             api.read(stce, CSR.MENVCFGH, 31)
             if (p.withSSTC) api.write(stce, CSR.MENVCFGH, 31)
+            api.read(adue, CSR.MENVCFGH, 29)
+            if (p.withSvadu) api.write(adue, CSR.MENVCFGH, 29)
           } else {
             api.read(stce, CSR.MENVCFG, 63)
             if (p.withSSTC) api.write(stce, CSR.MENVCFG, 63)
+            api.read(adue, CSR.MENVCFG, 61)
+            if (p.withSvadu) api.write(adue, CSR.MENVCFG, 61)
           }
         }
       }
@@ -708,14 +715,20 @@ class PrivilegedPlugin(val p : PrivilegedParam, val hartIds : Seq[Int]) extends 
         val envcfg = new Area {
           val stce = p.withSSTC.mux(RegInit(False), False)
           val stceOr = stce && m.envcfg.stce
+          val adue = p.withSvadu.mux(RegInit(False), False)
+          val adueRO = adue && m.envcfg.adue
 
           val stceMap = new Area {
             if (XLEN.get == 32) {
               api.read(stceOr, CSR.HENVCFGH, 31)
               if (p.withSSTC) api.writeWhen(stce, m.envcfg.stce, CSR.HENVCFGH, 31)
+              api.read(adueRO, CSR.HENVCFGH, 29)
+              if (p.withSvadu) api.writeWhen(adue, m.envcfg.adue, CSR.HENVCFGH, 29)
             } else {
               api.read(stceOr, CSR.HENVCFG, 63)
               if (p.withSSTC) api.writeWhen(stce, m.envcfg.stce, CSR.HENVCFG, 63)
+              api.read(adueRO, CSR.HENVCFG, 61)
+              if (p.withSvadu) api.writeWhen(adue, m.envcfg.adue, CSR.HENVCFG, 61)
             }
           }
         }
