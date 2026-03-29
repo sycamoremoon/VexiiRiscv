@@ -639,6 +639,7 @@ class MmuPlugin(var spec : MmuSpec,
             svadu.get.logic.cmd.data := load.rsp.data
             svadu.get.logic.cmd.address := load.cmd.address
             svadu.get.logic.cmd.permission := permission
+            if(priv.implementHypervisor) svadu.get.logic.cmd.isTwoStage := isTwoStage
             when(svadu.get.logic.cmd.ready === True) {
               goto(REFILL(levelId))
             }
