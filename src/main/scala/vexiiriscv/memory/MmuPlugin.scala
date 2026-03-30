@@ -376,7 +376,7 @@ class MmuPlugin(var spec : MmuSpec,
         val lineIsGuest      = entriesMux(_.guest)
         val lineDirty        = entriesMux(_.dirty)
         val lineAccessed     = entriesMux(_.accessed)
-        val refill_svadu      = (!lineDirty && ps.req.STORE)
+        val refill_svadu     = svadu.isEmpty.mux(False, !lineDirty && ps.req.STORE)
 
         val requireMmuLockup  = CombInit(ps.usage match {
           case LOAD_STORE => ps.req.FORCE_GUEST.mux(vsatpValid, api.lsuTranslationEnable)
@@ -393,13 +393,14 @@ class MmuPlugin(var spec : MmuSpec,
           val allow_write   = lineAllowWrite
 
           HAZARD        := False
-          REFILL        := !hit || refill_svadu
+          REFILL        := !hit || svaduEnabled.mux(refill_svadu, False)
           TRANSLATED    := lineTranslated
           PAGE_FAULT    := (lineAllowUser && nominalSupervisor && !allow_sum) ||
                             (!lineAllowUser && nominalUser) ||
                             Mux(ps.req.LOAD, !allow_read, False) ||
                             Mux(ps.req.STORE, !allow_write, False) ||
-                            Mux(ps.req.EXECUTE, !allow_execute, False)
+                            Mux(ps.req.EXECUTE, !allow_execute, False) ||
+                            !lineAccessed
           ACCESS_FAULT  := False
         } otherwise {
           HAZARD        := False
@@ -556,7 +557,8 @@ class MmuPlugin(var spec : MmuSpec,
         val accessFault = pteReadError || (!pteFault && leafAccessFault)
         val guestFault = shadowReadError && !pteReadError
         val translationFault = pteFault || leafAccessFault
-        val svaduFault = Reg(False)
+        val svaduFault = Reg(Bits(2 bits))
+        svaduFault := B(0)
 
         def doneLogic() : Unit = {
           val translatedAddress = load.levelToPhysicalAddress(levelId)
@@ -574,9 +576,9 @@ class MmuPlugin(var spec : MmuSpec,
           refillPorts.map(_.rsp).foreach { o =>
             o.bypass := False
             o.pageFault := pageFault
-            o.accessFault := accessFault
-            o.guestFault := shadowReadError
-            o.svaduFault := svaduFault
+            o.accessFault := accessFault || svaduFault(0)
+            o.guestFault := shadowReadError || svaduFault(1)
+            o.svaduFault := svaduFault.orR
             o.pf  := pageFault
             o.ae_ptw    := accessFault && !load.leaf
             o.ae_final  := accessFault && load.leaf //Note so sure
@@ -665,7 +667,7 @@ class MmuPlugin(var spec : MmuSpec,
             storageLevel.write.data.virtualAddress  := virtual(specLevel.virtualOffset + log2Up(storageLevel.slp.sets), widthOf(storageLevel.write.data.virtualAddress) bits)
             storageLevel.write.data.physicalAddress := (load.levelToPhysicalAddress(levelId) >> specLevel.virtualOffset).resized
             storageLevel.write.data.allowRead       := load.flags.R
-            storageLevel.write.data.allowWrite      := load.flags.W
+            storageLevel.write.data.allowWrite      := load.flags.W && svadu.isEmpty.mux(load.flags.D, svaduEnabled.mux(True, load.flags.D))
             storageLevel.write.data.allowExecute    := load.flags.X
             storageLevel.write.data.allowUser       := load.flags.U
             storageLevel.write.data.dirty           := svadu.isEmpty.mux(load.flags.D, (permission.write && svaduEnabled).mux(True, load.flags.D))

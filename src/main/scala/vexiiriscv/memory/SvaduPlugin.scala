@@ -17,7 +17,7 @@ case class SvaduCmd(requestGuest : Boolean)  extends Bundle {
 }
 
 case class SvaduRsp()  extends Bundle {
-    val error = Bool()
+    val error = Bits(2 bits)
 }
 
 class SvaduPlugin extends FiberPlugin {
@@ -33,7 +33,7 @@ class SvaduPlugin extends FiberPlugin {
         storeLock.release()
 
         val rsp = Flow(SvaduRsp())
-        rsp.error := False
+        rsp.error := B(0)
         rsp.valid := False
 
         val cmd = Stream(SvaduCmd(priv.implementHypervisor))
@@ -80,7 +80,7 @@ class SvaduPlugin extends FiberPlugin {
 
             DONE whenIsActive {
                 rsp.valid := True
-                rsp.error := storeBus.rsp.error(1) // Only care about guest-page fault
+                rsp.error := storeBus.rsp.error
                 goto(IDLE)
             }
         }

@@ -328,6 +328,8 @@ class ShadowMmuPlugin(var spec : MmuSpec,
         val permissionFault = Mux(permission.read, !(load.flags.R || (load.flags.X && mmu.logic.status.mxr)), False) ||
                               Mux(permission.write, !(load.flags.W || svadu.isEmpty.mux(load.flags.D, True)), False) ||
                               Mux(permission.execute, !(load.flags.X), False)
+        val svaduFault = Reg(Bool())
+        svaduFault := False
 
         CMD(levelId) whenIsActive{
           when(cacheRefill === 0 && cacheRefillAny === False) {
@@ -387,6 +389,7 @@ class ShadowMmuPlugin(var spec : MmuSpec,
             svadu.get.logic.cmd.permission := permission
             if(priv.implementHypervisor) svadu.get.logic.cmd.isTwoStage := False
             when(svadu.get.logic.rsp.valid === True) {
+              svaduFault := svadu.get.logic.rsp.error(0)
               goto(REFILL(levelId))
             }
           }
@@ -405,7 +408,7 @@ class ShadowMmuPlugin(var spec : MmuSpec,
             storageLevel.write.data.virtualAddress  := virtual(specLevel.virtualOffset + log2Up(storageLevel.slp.sets), widthOf(storageLevel.write.data.virtualAddress) bits)
             storageLevel.write.data.physicalAddress := (load.levelToPhysicalAddress(levelId) >> specLevel.virtualOffset).resized
             storageLevel.write.data.allowRead       := load.flags.R
-            storageLevel.write.data.allowWrite      := load.flags.W
+            storageLevel.write.data.allowWrite      := load.flags.W && svadu.isEmpty.mux(load.flags.D, svaduEnabled.mux(True, load.flags.D))
             storageLevel.write.data.allowExecute    := load.flags.X
             storageLevel.write.data.dirty           := svadu.isEmpty.mux(load.flags.D, (permission.write && svaduEnabled).mux(True, load.flags.D))
             storageLevel.write.data.accessed        := svadu.isEmpty.mux(load.flags.A, svaduEnabled.mux(True, load.flags.A))
@@ -430,7 +433,7 @@ class ShadowMmuPlugin(var spec : MmuSpec,
 
             /* TODO: guestFault */
             o.bypass      := False
-            o.pageFault   := Mux(translationFault, pageFault, permissionFault)
+            o.pageFault   := Mux(translationFault, pageFault, permissionFault) || svaduFault
             o.accessFault := accessFault
             o.pf          := pageFault
             o.ae_ptw      := accessFault && !load.leaf
