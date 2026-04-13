@@ -21,6 +21,7 @@ class ShadowMmuPlugin(var spec : MmuSpec,
                       var physicalWidth : Int,
                       var vmidWidth : Int) extends FiberPlugin with GenericMmuPlugin{
   override def isShadowMmu : Boolean = true
+  override def allowInternalTranslation : Boolean = true
 
   /* Second stage is always zero-extended */
   def getSignExtension(kind: AddressTranslationPortUsage, rawAddress: UInt) = False
@@ -172,6 +173,56 @@ class ShadowMmuPlugin(var spec : MmuSpec,
       }
     }
 
+    val internalPortSpecsSorted = internalPortSpecs.sortBy(_.ss.p.priority).reverse
+    val internalPorts = for(ps <- internalPortSpecsSorted) yield new Composite(ps.rsp, "logic", false){
+      // import ps._
+      val storage = storages.find(_.self == ps.ss).get
+      val reqAddress = ps.req.address.resize(MIXED_WIDTH)
+      val reads = for (sl <- storage.sl) yield new Area {
+        val readAddress = reqAddress(sl.lineRange)
+        val check = sl.ways.map(way => new Area {
+          val entry = way.readAsync(readAddress)
+          val hit = entry.hit(reqAddress) && entry.valid
+        })
+        val entries = Vec(check.map(_.entry))
+        val hits = Vec(check.map(_.hit))
+      }
+
+      val ctrl = new Area {
+        val hits = Cat(reads.map(_.hits))
+        val entries = reads.flatMap(_.entries)
+        val hit = hits.orR
+        val oh = OHMasking.firstV2(hits)
+
+        def entriesMux[T <: Data](f : MmuTlbStorageEntry => T) : T = OhMux.or(oh, entries.map(f))
+
+        val lineAllowExecute = entriesMux(_.allowExecute)
+        val lineAllowRead    = entriesMux(_.allowRead)
+        val lineAllowWrite   = entriesMux(_.allowWrite)
+        val lineTranslated   = entriesMux(_.physicalAddressFrom(reqAddress))
+
+        val requireMmuLockup = hgatp.mode === spec.satpMode
+
+        when (requireMmuLockup) {
+          val allow_execute = lineAllowExecute
+          val allow_read    = lineAllowRead || mmu.logic.status.mxr && lineAllowExecute
+          val allow_write   = lineAllowWrite
+
+          ps.rsp.hit          := hit
+          ps.rsp.translated   := lineTranslated.resized
+          ps.rsp.pageFault    := Mux(ps.req.load, !allow_read, False) ||
+                                 Mux(ps.req.store, !allow_write, False) ||
+                                 Mux(ps.req.execute, !allow_execute, False)
+          ps.rsp.accessFault  := False
+        } otherwise {
+          ps.rsp.hit          := True
+          ps.rsp.translated   := reqAddress.resized
+          ps.rsp.pageFault    := False
+          ps.rsp.accessFault  := reqAddress.drop(physicalWidth) =/= 0
+        }
+      }
+    }
+
     // Implement the TLB storage refill FSM
     val refill = new StateMachine{
       val IDLE, BARE = new State
@@ -201,7 +252,7 @@ class ShadowMmuPlugin(var spec : MmuSpec,
       IDLE whenIsActive {
         when(arbiter.io.output.valid) {
           portOhReg := arbiter.io.chosenOH
-          storageOhReg := UIntToOh(arbiter.io.output.storageId)
+          storageOhReg := UIntToOh(arbiter.io.output.storageId, storages.size)
           storageEnable := arbiter.io.output.storageEnable
           virtual := arbiter.io.output.address
           permission := arbiter.io.output.permission

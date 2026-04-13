@@ -99,6 +99,7 @@ trait AddressTranslationService extends Area {
   def getStorageId(s : Any) : Int
   def getStorageIdWidth() : Int
   def getSignExtension(kind : AddressTranslationPortUsage, rawAddress : UInt) : Bool
+  def allowInternalTranslation : Boolean
 
   val regionRetainer = Retainer()
 
@@ -108,6 +109,10 @@ trait AddressTranslationService extends Area {
                          usage: AddressTranslationPortUsage,
                          portSpec: Any,
                          storageSpec: Any): AddressTranslationRsp
+
+  // New Address translation interfaces are directly bound into MMU
+  def newInternalTranslationPort(req: InternalAddressTranslationReq,
+                                 storageSpec: Any): InternalAddressTranslationRsp
 
   val refillPorts = ArrayBuffer[AddressTranslationRefill]()
   def newRefillPort() = refillPorts.addRet(AddressTranslationRefill(getStorageIdWidth()))
@@ -138,6 +143,20 @@ class AddressTranslationRsp(s : AddressTranslationService, val wayCount : Int) e
     val BYPASS_TRANSLATION = Payload(Bool())
     val ADDRESS_EXTENSION = Payload(Bool())
   }
+}
+
+case class InternalAddressTranslationReq(
+  address: UInt,
+  load: Bool,
+  store: Bool,
+  execute: Bool
+)
+
+class InternalAddressTranslationRsp(s : AddressTranslationService, val wayCount : Int) extends Area {
+  val translated = PHYSICAL_ADDRESS()
+  val hit = Bool()
+  val pageFault = Bool()
+  val accessFault = Bool()
 }
 
 trait PmpService extends Area {

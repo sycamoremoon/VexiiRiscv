@@ -161,6 +161,11 @@ trait GenericMmuPlugin extends AddressTranslationService {
   }
   val portSpecs = ArrayBuffer[PortSpec]()
 
+  case class InternalPortSpec(req: InternalAddressTranslationReq,
+                              ss : MmuStorageSpec,
+                              rsp : InternalAddressTranslationRsp)
+  val internalPortSpecs = ArrayBuffer[InternalPortSpec]()
+
   val storageSpecs = ArrayBuffer[MmuStorageSpec]()
 
   override def newStorage(pAny: Any, pmuEventId : Int) : Any = {
@@ -192,6 +197,18 @@ trait GenericMmuPlugin extends AddressTranslationService {
       )
     ).rsp
   }
+
+  override def newInternalTranslationPort(req: InternalAddressTranslationReq,
+                                          storageSpec: Any) = {
+    val ss = storageSpec.asInstanceOf[MmuStorageSpec]
+    internalPortSpecs.addRet(
+      new InternalPortSpec(
+        req = req,
+        ss  = ss,
+        rsp = new InternalAddressTranslationRsp(this, ss.p.levels.map(_.ways).sum)
+      )
+    ).rsp
+  }
 }
 
 /**
@@ -207,6 +224,7 @@ class MmuPlugin(var spec : MmuSpec,
                 var physicalWidth : Int,
                 var asidWidth : Int) extends FiberPlugin with GenericMmuPlugin{
   override def isShadowMmu : Boolean = false
+  override def allowInternalTranslation: Boolean = false
 
   val api = during build new Area{
     val fetchTranslationEnable = Bool()
@@ -309,6 +327,7 @@ class MmuPlugin(var spec : MmuSpec,
     csrLock.release()
     portsLock.await()
 
+    assert(internalPortSpecs.isEmpty, "MMU does not support internal translation ports")
     assert(storageSpecs.map(_.p.priority).distinct.size == storageSpecs.size, "MMU storages needs different priorities")
     // Implement the hardware for all the TLB storages
     val tlbGenerateParam = MmuTlbStorageEntryParam(

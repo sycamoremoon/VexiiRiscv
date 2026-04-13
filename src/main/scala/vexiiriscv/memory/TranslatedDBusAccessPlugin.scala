@@ -5,8 +5,10 @@ import spinal.lib._
 import spinal.lib.misc.plugin.FiberPlugin
 import spinal.lib.fsm.StateMachine
 import spinal.lib.fsm.State
+import vexiiriscv.Global
+import vexiiriscv.misc.{PerformanceCounterService, TrapPlugin}
 
-class TranslatedDBusAccessPlugin() extends FiberPlugin with TranslatedDBusAccessService {
+class TranslatedDBusAccessPlugin(translationStorageParameter: MmuStorageParameter) extends FiberPlugin with TranslatedDBusAccessService {
   override def accessRefillCount: Int = 0
   override def accessWake: Bits = B(0)
 
@@ -15,14 +17,41 @@ class TranslatedDBusAccessPlugin() extends FiberPlugin with TranslatedDBusAccess
     val ats = host.find[AddressTranslationService](_.isShadowMmu)
     val accessLock = retains(access.accessRetainer)
     val withAtsRedo = ats.mayNeedRedo
+    val enableQuery = translationStorageParameter != null
+    val withQuery = ats.allowInternalTranslation && withAtsRedo && enableQuery
     val atsPortsLock = retains(ats.portsLock)
+    val atsStorageLock = retains(ats.storageLock)
 
     awaitBuild()
 
     val accessBus = access.newDBusAccess()
     accessLock.release()
 
+    val cmd = accessBus.cmd
+    val rsp = accessBus.rsp
+
+    cmd.valid     := False
+    cmd.address   := U(0)
+    cmd.size      := U(0)
+
+    val queryStorage = withQuery generate ats.newStorage(translationStorageParameter, PerformanceCounterService.DCACHE_TLB_CYCLES)
+    val storageId = withQuery generate ats.getStorageId(queryStorage)
+    atsStorageLock.release()
+
+    val tcmdCached = Reg(TranslatedDBusAccessCmd(true))
+
+    val req = InternalAddressTranslationReq(
+      address = tcmdCached.address,
+      load    = True,
+      store   = False,
+      execute = False
+    )
+
     val atsPort = withAtsRedo generate ats.newRefillPort()
+    val queryPort = withQuery generate ats.newInternalTranslationPort(
+      req         = req,
+      storageSpec = queryStorage
+    )
     atsPortsLock.release()
 
     accessRetainer.await()
@@ -31,20 +60,13 @@ class TranslatedDBusAccessPlugin() extends FiberPlugin with TranslatedDBusAccess
       atsPort.cmd.valid               := False
       atsPort.cmd.address             := U(0)
       atsPort.cmd.indirect            := True
-      atsPort.cmd.storageEnable       := False
-      atsPort.cmd.storageId           := U(0)
+      atsPort.cmd.storageEnable       := True
+      atsPort.cmd.storageId           := withQuery.mux(U(storageId), U(0))
       atsPort.cmd.permission.read     := True
       atsPort.cmd.permission.write    := False
       atsPort.cmd.permission.execute  := False
       atsPort.rsp.ready               := False
     }
-
-    val cmd = accessBus.cmd
-    val rsp = accessBus.rsp
-
-    cmd.valid     := False
-    cmd.address   := U(0)
-    cmd.size      := U(0)
 
     for (tda <- dbusAccesses) {
       tda.rsp.valid := False
@@ -58,7 +80,7 @@ class TranslatedDBusAccessPlugin() extends FiberPlugin with TranslatedDBusAccess
     val fsm = for (tda <- dbusAccesses) yield new StateMachine {
       val generateTransPort = withAtsRedo && tda.requestGuest
       val CMD, RSP = new State
-      val ATS = new State
+      val ATS, TLB = new State
       val tcmd = tda.cmd
       val trsp = tda.rsp
       val size = generateTransPort generate Reg(cloneOf(tcmd.size))
@@ -67,17 +89,28 @@ class TranslatedDBusAccessPlugin() extends FiberPlugin with TranslatedDBusAccess
 
       tcmd.ready := False
 
+      def guestCmd(): Unit = if (generateTransPort) {
+        val tcmdPayload = if (withQuery) tcmdCached else tcmd.payload
+        atsPort.cmd.valid   := True
+        atsPort.cmd.address := tcmdPayload.address.resized
+        when(atsPort.cmd.ready) {
+          if (!withQuery) tcmd.ready := True
+          size := tcmdPayload.size
+          goto(ATS)
+        }
+      }
+
+      def guestTLB(): Unit = {
+        tcmdCached := tcmd.payload
+        tcmd.ready := True
+        goto(TLB)
+      }
+
       CMD whenIsActive {
         when(tcmd.valid) {
           val guestCtx = WhenBuilder()
           if(generateTransPort) guestCtx.when(tcmd.guest) {
-            atsPort.cmd.valid   := True
-            atsPort.cmd.address := tcmd.address.resized
-            when(atsPort.cmd.ready) {
-              tcmd.ready  := True
-              size        := tcmd.size
-              goto(ATS)
-            }
+            if (withQuery) guestTLB else guestCmd
           }
           guestCtx.otherwise {
             cmd.valid     := True
@@ -91,7 +124,33 @@ class TranslatedDBusAccessPlugin() extends FiberPlugin with TranslatedDBusAccess
         }
       }
 
-      if(generateTransPort) ATS whenIsActive {
+      if (withQuery) TLB whenIsActive {
+        when (queryPort.hit) {
+          when (queryPort.pageFault || queryPort.accessFault) {
+            trsp.valid      := True
+            trsp.data       := req.address.asBits.resized
+            trsp.error(1)   := queryPort.pageFault
+            trsp.error(0)   := queryPort.accessFault
+            trsp.redo       := False
+            trsp.waitSlot   := B(0)
+            trsp.waitAny    := False
+            when (rsp.valid) {
+              goto(CMD)
+            }
+          } otherwise {
+            cmd.valid       := True
+            cmd.address     := queryPort.translated.resized
+            cmd.size        := tcmdCached.size
+            when (cmd.ready) {
+              goto(RSP)
+            }
+          }
+        } otherwise {
+          guestCmd
+        }
+      }
+
+      if (generateTransPort) ATS whenIsActive {
         when(atsPort.rsp.valid) {
           /* check permission */
           when (!atsPort.rsp.bypass && atsPort.rsp.pageFault || atsPort.rsp.accessFault) {

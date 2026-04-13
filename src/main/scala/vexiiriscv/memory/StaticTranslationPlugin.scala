@@ -21,6 +21,7 @@ class StaticTranslationPlugin(var physicalWidth: Int, val translationLevel : Int
   override def newStorage(pAny: Any, pmuStorageId : Int): Any = { }
   override def getStorageId(s: Any): Int = 0
   override def getStorageIdWidth(): Int = 0
+  override def allowInternalTranslation : Boolean = false
 
   case class PortSpec(stages: Seq[NodeBaseApi],
                       req: AddressTranslationReq,
@@ -39,6 +40,19 @@ class StaticTranslationPlugin(var physicalWidth: Int, val translationLevel : Int
         req = req,
         usage = usage,
         rsp = new AddressTranslationRsp(this, 0)
+      )
+    ).rsp
+  }
+
+  case class InternalPortSpec(req: InternalAddressTranslationReq,
+                              rsp : InternalAddressTranslationRsp)
+  val internalPortSpecs = ArrayBuffer[InternalPortSpec]()
+  override def newInternalTranslationPort(req: InternalAddressTranslationReq,
+                                          storageSpec: Any) = {
+    internalPortSpecs.addRet(
+      new InternalPortSpec(
+        req = req,
+        rsp = new InternalAddressTranslationRsp(this, 0)
       )
     ).rsp
   }
@@ -71,6 +85,15 @@ class StaticTranslationPlugin(var physicalWidth: Int, val translationLevel : Int
       PAGE_FAULT := False
       ACCESS_FAULT := spec.req.PRE_ADDRESS.drop(physicalWidth) =/= 0
       BYPASS_TRANSLATION := True
+    }
+
+    val internalPorts = for (spec <- internalPortSpecs) yield new Area {
+      import spec.rsp._
+
+      hit := True
+      translated := spec.req.address
+      pageFault := False
+      accessFault := spec.req.address.drop(physicalWidth) =/= 0
     }
   }
 }

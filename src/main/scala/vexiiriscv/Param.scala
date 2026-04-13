@@ -183,6 +183,7 @@ class ParamSimple() {
   var withCfu = false
   var gshareBytes = 4 KiB
   var recordHtinst = false
+  var guestMmuTranslationTlb = false
   val prefetcherRptParam = new PrefetcherRptParam()
 
   var fetchTsp = MmuStorageParameter(
@@ -272,6 +273,22 @@ class ParamSimple() {
     hitsAt = 0,
     ctrlAt = 1,
     rspAt = 1
+  )
+
+  var tdbTsp = MmuStorageParameter(
+    levels = List(
+      MmuStorageLevel(
+        id = 0,
+        ways = 3,
+        sets = 32
+      ),
+      MmuStorageLevel(
+        id = 1,
+        ways = 1,
+        sets = 32
+      )
+    ),
+    priority = 2
   )
 
   def fetchCachelessTiming = FetchCachelessTimingParameter(
@@ -803,6 +820,7 @@ class ParamSimple() {
     opt[Int]("asid-width") action{ (v,c) => asidWidth = v }
     opt[Int]("gshare-bytes") action{ (v,c) => gshareBytes = v }
     opt[Unit]("record-htinst") action{ (v, c) => recordHtinst = true }
+    opt[Unit]("with-guest-translation-tlb") action{ (v, c) => guestMmuTranslationTlb = true }
     opt[Unit]("dual-issue") action { (v, c) =>
       decoders = 2
       lanes = 2
@@ -846,7 +864,12 @@ class ParamSimple() {
     val intWritebackAt = 2 + withRvh.toInt //Alias for "trap at" as well
 
     plugins += new riscv.RiscvPlugin(xlen, hartCount, rvf = withRvf, rvd = withRvd, rvc = withRvc, rvh = withRvh, rve = withRve)
-    if (withMmu) plugins += new TranslatedDBusAccessPlugin()
+    if (withMmu) plugins += new TranslatedDBusAccessPlugin(
+      guestMmuTranslationTlb match {
+        case true  => tdbTsp
+        case false => null
+      }
+    )
     withMmu match {
       case false => plugins += new vexiiriscv.memory.StaticTranslationPlugin(physicalWidth)
       case true => plugins += new vexiiriscv.memory.MmuPlugin(
