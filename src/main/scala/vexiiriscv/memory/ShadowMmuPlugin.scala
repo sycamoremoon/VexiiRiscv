@@ -181,7 +181,7 @@ class ShadowMmuPlugin(var spec : MmuSpec,
       val reads = for (sl <- storage.sl) yield new Area {
         val readAddress = reqAddress(sl.lineRange)
         val check = sl.ways.map(way => new Area {
-          val entry = way.readAsync(readAddress)
+          val entry = way.readSync(readAddress)
           val hit = entry.hit(reqAddress) && entry.valid
         })
         val entries = Vec(check.map(_.entry))

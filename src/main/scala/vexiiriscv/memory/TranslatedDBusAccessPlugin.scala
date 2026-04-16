@@ -84,6 +84,8 @@ class TranslatedDBusAccessPlugin(translationStorageParameter: MmuStorageParamete
       val tcmd = tda.cmd
       val trsp = tda.rsp
       val size = generateTransPort generate Reg(cloneOf(tcmd.size))
+      val counter = Counter(1)
+      val counterFlow = RegNext(counter.willOverflow)
 
       setEntry(CMD)
 
@@ -103,6 +105,7 @@ class TranslatedDBusAccessPlugin(translationStorageParameter: MmuStorageParamete
       def guestTLB(): Unit = {
         tcmdCached := tcmd.payload
         tcmd.ready := True
+        counter.clear()
         goto(TLB)
       }
 
@@ -125,28 +128,33 @@ class TranslatedDBusAccessPlugin(translationStorageParameter: MmuStorageParamete
       }
 
       if (withQuery) TLB whenIsActive {
-        when (queryPort.hit) {
-          when (queryPort.pageFault || queryPort.accessFault) {
-            trsp.valid      := True
-            trsp.data       := req.address.asBits.resized
-            trsp.error(1)   := queryPort.pageFault
-            trsp.error(0)   := queryPort.accessFault
-            trsp.redo       := False
-            trsp.waitSlot   := B(0)
-            trsp.waitAny    := False
-            when (rsp.valid) {
-              goto(CMD)
+        when (!counterFlow) {
+          counter.increment()
+        }
+        when (counterFlow) {
+          when (queryPort.hit) {
+            when (queryPort.pageFault || queryPort.accessFault) {
+              trsp.valid      := True
+              trsp.data       := req.address.asBits.resized
+              trsp.error(1)   := queryPort.pageFault
+              trsp.error(0)   := queryPort.accessFault
+              trsp.redo       := False
+              trsp.waitSlot   := B(0)
+              trsp.waitAny    := False
+              when (rsp.valid) {
+                goto(CMD)
+              }
+            } otherwise {
+              cmd.valid       := True
+              cmd.address     := queryPort.translated.resized
+              cmd.size        := tcmdCached.size
+              when (cmd.ready) {
+                goto(RSP)
+              }
             }
           } otherwise {
-            cmd.valid       := True
-            cmd.address     := queryPort.translated.resized
-            cmd.size        := tcmdCached.size
-            when (cmd.ready) {
-              goto(RSP)
-            }
+            guestCmd
           }
-        } otherwise {
-          guestCmd
         }
       }
 
