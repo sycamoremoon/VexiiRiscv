@@ -72,6 +72,7 @@ class TranslatedDBusAccessPlugin() extends FiberPlugin with TranslatedDBusAccess
       val trsp = tda.rsp
       val size = generateTransPort generate Reg(cloneOf(tcmd.size))
       val data = generateTransPort generate Reg(cloneOf(tcmd.data))
+      val write = Reg(cloneOf(tcmd.write))
 
       setEntry(CMD)
 
@@ -83,11 +84,13 @@ class TranslatedDBusAccessPlugin() extends FiberPlugin with TranslatedDBusAccess
           if(generateTransPort) guestCtx.when(tcmd.guest) {
             atsPort.cmd.valid   := True
             atsPort.cmd.address := tcmd.address.resized
+            atsPort.cmd.storageEnable := tcmd.write
             atsPort.cmd.permission.write := tcmd.write
             when(atsPort.cmd.ready) {
               tcmd.ready  := True
               size        := tcmd.size
               data        := tcmd.data
+              write       := tcmd.write
               goto(ATS)
             }
           }
@@ -101,12 +104,14 @@ class TranslatedDBusAccessPlugin() extends FiberPlugin with TranslatedDBusAccess
               storeCmd.valid := True
               when (storeCmd.ready) {
                 tcmd.ready := True
+                write := tcmd.write
                 goto(RSP)
               }
             } otherwise {
               cmd.valid := True
               when (cmd.ready) {
                 tcmd.ready := True
+                write := tcmd.write
                 goto(RSP)
               }
             }
@@ -134,7 +139,7 @@ class TranslatedDBusAccessPlugin() extends FiberPlugin with TranslatedDBusAccess
             storeCmd.address   := atsPort.rsp.address
             storeCmd.size      := size
             storeCmd.data      := data
-            when(tcmd.write) {
+            when(write) {
               storeCmd.valid := True
               when (storeCmd.ready) {
                 atsPort.rsp.ready := True
@@ -152,7 +157,7 @@ class TranslatedDBusAccessPlugin() extends FiberPlugin with TranslatedDBusAccess
       }
 
       RSP whenIsActive {
-        when(tcmd.write) {
+        when(write) {
           trsp.valid        := storeRsp.valid
           trsp.data         := B(0)
           trsp.error(0)     := storeRsp.error

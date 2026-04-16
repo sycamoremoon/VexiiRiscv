@@ -672,7 +672,11 @@ class MmuPlugin(var spec : MmuSpec,
             svaduPort.cmd.permission := permission
             if(priv.implementHypervisor) svaduPort.cmd.isTwoStage := isTwoStage
             when(svaduPort.rsp.valid) {
-              goto(REFILL(levelId))
+              when(svaduPort.rsp.error.orR) {
+                goto(DONE(levelId))
+              } otherwise {
+                goto(REFILL(levelId))
+              }
             }
           }
         }

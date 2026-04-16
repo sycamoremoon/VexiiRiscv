@@ -339,7 +339,7 @@ class ShadowMmuPlugin(var spec : MmuSpec,
         val accessFault = pteReadError || !pteFault && leafAccessFault
         val translationFault = pteFault || leafAccessFault
         val permissionFault = Mux(permission.read, !(load.flags.R || (load.flags.X && mmu.logic.status.mxr)), False) ||
-                              Mux(permission.write, !(load.flags.W || svaduEnabled.mux(True, load.flags.D)), False) ||
+                              Mux(permission.write, !(load.flags.W || svaduEnabled.mux(False, load.flags.D)), False) ||
                               Mux(permission.execute, !(load.flags.X), False)
 
         CMD(levelId) whenIsActive{
@@ -399,7 +399,11 @@ class ShadowMmuPlugin(var spec : MmuSpec,
             svaduPort.cmd.address := load.cmd.address
             svaduPort.cmd.permission := permission
             when(svaduPort.rsp.valid) {
-              goto(REFILL(levelId))
+              when(svaduPort.rsp.error.orR) {
+                goto(DONE(levelId))
+              } otherwise {
+                goto(REFILL(levelId))
+              }
             }
           }
         }
