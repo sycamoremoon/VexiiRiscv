@@ -330,9 +330,9 @@ class MmuPlugin(var spec : MmuSpec,
     def mprv = priv.logic.harts(0).m.status.mprv
     def mpp = priv.logic.harts(0).m.status.mpp
     val effectiveGuest = isGuest || (mprv && priv.logic.harts(0).m.status.mpv)
-    val svaduEnabled = priv.p.withSvadu.mux((priv.logic.harts(0).m.envcfg.adue && !PrivilegeMode.isGuest(priv.getPrivilege(0))) ||
-                                          priv.implementHypervisor.mux(priv.logic.harts(0).h.envcfg.adueRO && PrivilegeMode.isGuest(priv.getPrivilege(0)), False),
-                                          False)
+    val svaduEnabled = priv.p.withSvadu.mux((priv.logic.harts(0).m.envcfg.adue && !effectiveGuest) ||
+                                          priv.implementHypervisor.mux(priv.logic.harts(0).h.envcfg.adueRO && effectiveGuest, False),
+                                          False) // FORCE_GUEST
 
     val satpValid = satp.mode === spec.satpMode
     val vsatpValid = priv.implementHypervisor.mux(vsatp.mode === spec.satpMode, False)
@@ -645,6 +645,8 @@ class MmuPlugin(var spec : MmuSpec,
                   } elsewhen(load.leaf) {
                     when(!storageEnable || translationFault) {
                       goto(DONE(levelId))
+                    } elsewhen(load.svade_exception && svaduEnabled) {
+                      goto(UPDATE(levelId))
                     } otherwise {
                       goto(REFILL(levelId))
                     }

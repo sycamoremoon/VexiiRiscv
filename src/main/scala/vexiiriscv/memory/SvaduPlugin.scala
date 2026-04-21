@@ -61,23 +61,25 @@ class SvaduPlugin extends FiberPlugin {
 
             val fsm = new StateMachine {
                 val IDLE, CMD, RSP = new State
+                val cmd = Reg(cloneOf(store.cmd))
                 setEntry(IDLE)
                 store.cmd.ready := False
 
                 IDLE whenIsActive {
                     when(store.cmd.valid) {
                         store.cmd.ready := True
+                        cmd := store.cmd
                         goto(CMD)
                     }
                 }
 
                 CMD whenIsActive {
                     busCmd.valid := True
-                    busCmd.data := store.cmd.data
+                    busCmd.data := cmd.data
                     busCmd.data(6).set // PTE_A bit
-                    busCmd.data(7).setWhen(store.cmd.permission.write) // PTE_D bit
-                    if(store.requestGuest) busCmd.guest := store.cmd.isTwoStage
-                    busCmd.address := store.cmd.address
+                    busCmd.data(7).setWhen(cmd.permission.write) // PTE_D bit
+                    if(store.requestGuest) busCmd.guest := cmd.isTwoStage
+                    busCmd.address := cmd.address
                     when(busCmd.ready) {
                         goto(RSP)
                     }
@@ -86,6 +88,7 @@ class SvaduPlugin extends FiberPlugin {
                 RSP whenIsActive {
                     when(busRsp.valid){
                         when(busRsp.redo){
+                            busRsp.ready := True
                             goto(CMD)
                         } otherwise {
                             store.rsp.valid := True

@@ -100,7 +100,7 @@ class ShadowMmuPlugin(var spec : MmuSpec,
     val isUser = priv.isUSer(0)
     val isVirtual = PrivilegeMode.isGuest(priv.getPrivilege(0))
     def mprv = priv.logic.harts(0).m.status.mprv
-    val svaduEnabled = priv.p.withSvadu.mux(priv.logic.harts(0).h.envcfg.adueRO && isVirtual, False)
+    val svaduEnabled = priv.p.withSvadu.mux(priv.logic.harts(0).m.envcfg.adue, False)
 
     api.fetchTranslationEnable := hgatp.mode === spec.satpMode
     api.fetchTranslationEnable clearWhen(!isVirtual)
@@ -374,6 +374,8 @@ class ShadowMmuPlugin(var spec : MmuSpec,
                   } elsewhen(load.leaf) {
                     when(!storageEnable || translationFault) {
                       goto(DONE(levelId))
+                    } elsewhen(load.svade_exception && svaduEnabled) {
+                      goto(UPDATE(levelId))
                     } otherwise {
                       goto(REFILL(levelId))
                     }
@@ -392,7 +394,7 @@ class ShadowMmuPlugin(var spec : MmuSpec,
         }
 
         if(priv.p.withSvadu) {
-          pageFault.setWhen(svaduPort.rsp.error(0))
+          accessFault.setWhen(svaduPort.rsp.error(0))
           UPDATE(levelId) whenIsActive {
             svaduPort.cmd.valid := True
             svaduPort.cmd.data := load.rsp.data
